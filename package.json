@@ -1,15 +1,16 @@
 {
   "name": "obsidian-citation-plugin",
-  "version": "0.4.5",
+  "version": "0.5.0",
   "description": "Automatically search and insert citations from a Zotero library",
   "main": "main.js",
   "scripts": {
     "dev": "rollup --config rollup.config.js -w",
-    "build": "rollup --config rollup.config.js",
+    "build": "tsc --noEmit && rollup --config rollup.config.js",
     "lint": "eslint . --ext .ts,.tsx",
     "test": "jest",
     "doc": "typedoc src/types.ts",
-    "release": "standard-version"
+    "release": "standard-version",
+    "check:build": "node scripts/check-build.cjs"
   },
   "standard-version": {
     "bumpFiles": [
@@ -47,7 +48,7 @@
     "typescript": "^4.1.3"
   },
   "dependencies": {
-    "@retorquere/bibtex-parser": "^3.2.30",
+    "@retorquere/bibtex-parser": "6.0.1",
     "chokidar": "^3.5.0",
     "handlebars": "^4.7.6",
     "open": "^7.3.0",

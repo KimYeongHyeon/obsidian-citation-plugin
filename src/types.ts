@@ -16,6 +16,15 @@ export const TEMPLATE_VARIABLES = {
   citekey: 'Unique citekey',
   abstract: '',
   authorString: 'Comma-separated list of author names',
+  editorString: 'Comma-separated list of editor names',
+  type: '',
+  keywords: 'Keywords',
+  language: 'Language',
+  ISBN: 'ISBN',
+  issue: 'Issue number',
+  issued: 'Date of issue in YYYY-MM-DD format',
+  zoteroPdfHash: 'Zotero PDF attachment key',
+  zoteroPdfURI: 'URI to open the PDF attachment in Zotero',
   containerTitle:
     'Title of the container holding the reference (e.g. book title for a book chapter, or the journal title for a journal article)',
   DOI: '',
@@ -51,6 +60,18 @@ export class Library {
 
       abstract: entry.abstract,
       authorString: entry.authorString,
+      editorString: entry.editorString,
+      type: entry.type,
+      keywords: entry.keywords,
+      language: entry.language,
+      ISBN: entry.ISBN,
+      issue: entry.issue,
+      issued:
+        entry.issuedDate && !isNaN(entry.issuedDate.getTime())
+          ? entry.issuedDate.toISOString().slice(0, 10)
+          : undefined,
+      zoteroPdfHash: entry.zoteroPdfHash,
+      zoteroPdfURI: entry.zoteroPdfURI,
       containerTitle: entry.containerTitle,
       DOI: entry.DOI,
       eprint: entry.eprint,
@@ -85,13 +106,19 @@ export function loadEntries(
 
   if (databaseType == 'csl-json') {
     libraryArray = JSON.parse(databaseRaw);
+    if (!Array.isArray(libraryArray) || !libraryArray.length)
+      throw new Error('CSL JSON must be a non-empty array of entries');
   } else if (databaseType == 'biblatex') {
+    let warningCount = 0;
     const options: BibTeXParser.ParserOptions = {
-      errorHandler: (err) => {
-        console.warn(
-          'Citation plugin: non-fatal error loading BibLaTeX entry:',
-          err,
-        );
+      sentenceCase: false,
+      verbatimFields: [
+        /^citeulike-linkout-[0-9]+$/,
+        ...BibTeXParser.fields.verbatim,
+        'comment',
+      ],
+      errorHandler: () => {
+        warningCount++;
       },
     };
 
@@ -100,6 +127,11 @@ export function loadEntries(
       options,
     ) as BibTeXParser.Bibliography;
 
+    if (warningCount) {
+      console.warn(
+        `Citation plugin: ${warningCount} non-fatal BibLaTeX parser warnings`,
+      );
+    }
     parsed.errors.forEach((error) => {
       console.error(
         `Citation plugin: fatal error loading BibLaTeX entry` +
@@ -108,15 +140,97 @@ export function loadEntries(
       );
     });
 
+    if (parsed.errors.length) {
+      const error = parsed.errors[0];
+      throw new Error(
+        `Fatal BibLaTeX parse error at line ${error.line}, column ${error.column}: ${error.message}`,
+      );
+    }
     libraryArray = parsed.entries;
+  } else {
+    throw new Error(`Unsupported bibliography format: ${databaseType}`);
   }
 
+  const seen = new Map<string, EntryData>();
+  for (const entry of libraryArray) {
+    const id =
+      databaseType === 'csl-json'
+        ? (entry as EntryDataCSL)?.id
+        : (entry as EntryDataBibLaTeX)?.key;
+    if (typeof id !== 'string' || !id.trim())
+      throw new Error('Bibliography entry is missing an ID');
+    if (
+      databaseType === 'csl-json' &&
+      (typeof (entry as EntryDataCSL).type !== 'string' ||
+        !(entry as EntryDataCSL).type.trim())
+    )
+      throw new Error(`CSL entry ${id} is missing a type`);
+    if (databaseType === 'csl-json') {
+      const csl = entry as EntryDataCSL;
+      for (const role of ['author', 'editor'] as const) {
+        const names = csl[role];
+        if (
+          names != null &&
+          (!Array.isArray(names) ||
+            names.some(
+              (name) =>
+                !name ||
+                typeof name !== 'object' ||
+                ['given', 'family', 'literal'].some(
+                  (key) =>
+                    (name as IIndexable)[key] != null &&
+                    typeof (name as IIndexable)[key] !== 'string',
+                ),
+            ))
+        ) {
+          throw new Error(`CSL entry ${id} has invalid ${role} names`);
+        }
+      }
+      if (
+        csl.issued != null &&
+        (typeof csl.issued !== 'object' ||
+          Array.isArray(csl.issued) ||
+          (csl.issued['date-parts'] != null &&
+            (!Array.isArray(csl.issued['date-parts']) ||
+              csl.issued['date-parts'].some(
+                (parts) =>
+                  !Array.isArray(parts) ||
+                  parts.some(
+                    (part) =>
+                      typeof part !== 'number' || !Number.isFinite(part),
+                  ),
+              ))))
+      ) {
+        throw new Error(`CSL entry ${id} has invalid issued date-parts`);
+      }
+    }
+    if (seen.has(id)) {
+      const identical = canonicalJSON(seen.get(id)) === canonicalJSON(entry);
+      console.warn(
+        `Citation plugin: ${
+          identical ? 'identical' : 'conflicting'
+        } duplicate bibliography ID ${id}; library lookup uses the last entry`,
+      );
+    }
+    seen.set(id, entry);
+  }
   return libraryArray;
+}
+
+function canonicalJSON(value: unknown): string {
+  return JSON.stringify(value, (_key, item) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(
+          Object.entries(item).sort(([a], [b]) => a.localeCompare(b)),
+        )
+      : item,
+  );
 }
 
 export interface Author {
   given?: string;
   family?: string;
+  literal?: string;
 }
 
 /**
@@ -124,6 +238,22 @@ export interface Author {
  * Each entry has a unique identifier, known in most reference managers as its
  * "citekey."
  */
+function zoteroItemURI(value?: string): string {
+  if (typeof value !== 'string') return null;
+  const native = value.match(
+    /^zotero:\/\/select\/(library|groups\/\d+)\/items\/([A-Z0-9]{8})$/i,
+  );
+  if (native)
+    return `zotero://select/${native[1].toLowerCase()}/items/${native[2]}`;
+  const match = value.match(
+    /^https?:\/\/(?:www\.)?zotero\.org\/(users|groups)\/(\d+)\/items\/([A-Z0-9]{8})\/?$/i,
+  );
+  if (!match) return null;
+  return match[1].toLowerCase() === 'groups'
+    ? `zotero://select/groups/${match[2]}/items/${match[3]}`
+    : `zotero://select/library/items/${match[3]}`;
+}
+
 export abstract class Entry {
   /**
    * Unique identifier for the entry (also the citekey).
@@ -139,6 +269,11 @@ export abstract class Entry {
    * A comma-separated list of authors, each of the format `<firstname> <lastname>`.
    */
   public abstract authorString?: string;
+  public abstract editorString?: string;
+  public abstract keywords?: string;
+  public abstract language?: string;
+  public abstract ISBN?: string;
+  public abstract issue?: string;
 
   /**
    * The name of the container for this reference -- in the case of a book
@@ -188,7 +323,9 @@ export abstract class Entry {
 
   public get note(): string {
     return this._note
-      ?.map((el) => el.replace(/(zotero:\/\/.+)/g, '[Link]($1)'))
+      ?.map((el) =>
+        el.replace(/<a\s+href=(["'])(.*?)\1>([\s\S]*?)<\/a>/gi, '[$3]($2)'),
+      )
       .join('\n\n');
   }
 
@@ -196,26 +333,54 @@ export abstract class Entry {
    * A URI which will open the relevant entry in the Zotero client.
    */
   public get zoteroSelectURI(): string {
-    return `zotero://select/items/@${this.id}`;
+    const native = this.nativeZoteroURI;
+    return native || `zotero://select/items/@${encodeURIComponent(this.id)}`;
+  }
+
+  protected get nativeZoteroURI(): string {
+    return zoteroItemURI(this.id);
+  }
+
+  public get zoteroPdfHash(): string {
+    for (const file of this.files || []) {
+      if (!/\.pdf(?:$|:)/i.test(file)) continue;
+      const match = file.match(
+        /(?:^|[\\/])storage[\\/]([A-Z0-9]{8})[\\/][^\\/]+\.pdf(?:$|:)/i,
+      );
+      if (match) return match[1];
+    }
+    return null;
+  }
+
+  public get zoteroPdfURI(): string {
+    const library = this.nativeZoteroURI?.match(
+      /^zotero:\/\/select\/(library|groups\/\d+)\/items\//,
+    );
+    return this.zoteroPdfHash && library
+      ? `zotero://open-pdf/${library[1]}/items/${this.zoteroPdfHash}`
+      : null;
   }
 
   toJSON(): Record<string, unknown> {
     const jsonObj: Record<string, unknown> = Object.assign({}, this);
 
     // add getter values
-    const proto = Object.getPrototypeOf(this);
-    Object.entries(Object.getOwnPropertyDescriptors(proto))
-      .filter(([, descriptor]) => typeof descriptor.get == 'function')
-      .forEach(([key, descriptor]) => {
-        if (descriptor && key[0] !== '_') {
-          try {
-            const val = (this as IIndexable)[key];
-            jsonObj[key] = val;
-          } catch (error) {
-            return;
+    let proto = Object.getPrototypeOf(this);
+    while (proto && proto !== Object.prototype) {
+      Object.entries(Object.getOwnPropertyDescriptors(proto))
+        .filter(([, descriptor]) => typeof descriptor.get == 'function')
+        .forEach(([key, descriptor]) => {
+          if (descriptor && key[0] !== '_' && key !== 'nativeZoteroURI') {
+            try {
+              const val = (this as IIndexable)[key];
+              jsonObj[key] = val;
+            } catch (error) {
+              return;
+            }
           }
-        }
-      });
+        });
+      proto = Object.getPrototypeOf(proto);
+    }
 
     return jsonObj;
   }
@@ -229,6 +394,13 @@ export interface EntryDataCSL {
 
   abstract?: string;
   author?: Author[];
+  editor?: Author[];
+  keyword?: string;
+  language?: string;
+  ISBN?: string;
+  issue?: string;
+  uri?: string;
+  note?: string;
   'container-title'?: string;
   DOI?: string;
   'event-place'?: string;
@@ -240,6 +412,15 @@ export interface EntryDataCSL {
   title?: string;
   'title-short'?: string;
   URL?: string;
+}
+
+function formatCSLNames(names?: Author[]): string | null {
+  return names
+    ? names
+        .map((a) => a.literal || [a.given, a.family].filter(Boolean).join(' '))
+        .filter(Boolean)
+        .join(', ')
+    : null;
 }
 
 export class EntryCSLAdapter extends Entry {
@@ -266,9 +447,28 @@ export class EntryCSLAdapter extends Entry {
   }
 
   get authorString(): string | null {
-    return this.data.author
-      ? this.data.author.map((a) => `${a.given} ${a.family}`).join(', ')
-      : null;
+    return formatCSLNames(this.data.author);
+  }
+  get editorString(): string | null {
+    return formatCSLNames(this.data.editor);
+  }
+  get keywords(): string {
+    return this.data.keyword;
+  }
+  get language(): string {
+    return this.data.language;
+  }
+  get ISBN(): string {
+    return this.data.ISBN;
+  }
+  get issue(): string {
+    return this.data.issue;
+  }
+  protected get nativeZoteroURI(): string {
+    return zoteroItemURI(this.data.uri) || super.nativeZoteroURI;
+  }
+  get note(): string {
+    return this.data.note;
   }
 
   get containerTitle() {
@@ -287,14 +487,20 @@ export class EntryCSLAdapter extends Entry {
     if (
       !(
         this.data.issued &&
-        this.data.issued['date-parts'] &&
+        Array.isArray(this.data.issued['date-parts']) &&
+        Array.isArray(this.data.issued['date-parts'][0]) &&
         this.data.issued['date-parts'][0].length > 0
       )
     )
       return null;
 
-    const [year, month, day] = this.data.issued['date-parts'][0];
-    return new Date(Date.UTC(year, (month || 1) - 1, day || 1));
+    const [year, month = 1, day = 1] = this.data.issued['date-parts'][0];
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
+      ? date
+      : null;
   }
 
   get page() {
@@ -355,6 +561,7 @@ const BIBLATEX_PROPERTY_TAKE_FIRST: string[] = [
   'eprint',
   'eprinttype',
   'eventtitle',
+  'journal',
   'journaltitle',
   'location',
   'pages',
@@ -393,11 +600,17 @@ export class EntryBibLaTeXAdapter extends Entry {
       (map: [string, string]) => {
         const [src, tgt] = map;
         if (src in this.data.fields) {
-          let val = this.data.fields[src];
+          let val: any = this.data.fields[src];
           if (BIBLATEX_PROPERTY_TAKE_FIRST.includes(src)) {
             val = (val as any[])[0];
           }
 
+          if (
+            (src === 'title' || src === 'shorttitle') &&
+            typeof val === 'string'
+          ) {
+            val = val.replace(/<span class="nocase">([\s\S]*?)<\/span>/g, '$1');
+          }
           (this as IIndexable)[tgt] = val;
         }
       },
@@ -411,23 +624,54 @@ export class EntryBibLaTeXAdapter extends Entry {
     return this.data.type;
   }
 
+  protected get nativeZoteroURI(): string {
+    return (
+      zoteroItemURI(this.data.fields.zotero?.[0]) ||
+      zoteroItemURI(this.data.fields.uri?.[0]) ||
+      super.nativeZoteroURI
+    );
+  }
+
   get files(): string[] {
-    // For some reason the bibtex parser doesn't reliably parse file list to
-    // array ; so we'll do it manually / redundantly
-    let ret: string[] = [];
-    if (this.data.fields.file) {
-      ret = ret.concat(this.data.fields.file.flatMap((x) => x.split(';')));
-    }
-    if (this.data.fields.files) {
-      ret = ret.concat(this.data.fields.files.flatMap((x) => x.split(';')));
+    const ret: string[] = [];
+    for (const field of [this.data.fields.file, this.data.fields.files]) {
+      for (const value of field || []) {
+        for (let file of value.split(';')) {
+          file = file.trim().replace(/:(?:pdf|application\/pdf)$/i, '');
+          if (!/^[a-z]\\?:[\\/]/i.test(file)) {
+            file = file.replace(/^[^:]*:(?=(?:[a-z]\\?:[\\/]|[\\/]))/i, '');
+          }
+          file = file.replace(/^([a-z])\\:/i, '$1:');
+          if (file) ret.push(file);
+        }
+      }
     }
 
     return ret;
   }
 
   get authorString() {
-    if (this.data.creators.author) {
-      const names = this.data.creators.author.map((name) => {
+    return this.formatNames('author');
+  }
+  get editorString() {
+    return this.formatNames('editor');
+  }
+  get keywords() {
+    return this.data.fields.keywords?.join(', ');
+  }
+  get language() {
+    return this.data.fields.language?.[0];
+  }
+  get ISBN() {
+    return this.data.fields.isbn?.[0];
+  }
+  get issue() {
+    return this.data.fields.number?.[0];
+  }
+
+  private formatNames(role: 'author' | 'editor') {
+    if (this.data.creators[role]) {
+      const names = this.data.creators[role].map((name) => {
         if (name.literal) return name.literal;
         const parts = [name.firstName, name.prefix, name.lastName, name.suffix];
         // Drop any null parts and join
@@ -435,7 +679,7 @@ export class EntryBibLaTeXAdapter extends Entry {
       });
       return names.join(', ');
     } else {
-      return this.data.fields.author?.join(', ');
+      return this.data.fields[role]?.join(', ');
     }
   }
 
@@ -454,7 +698,19 @@ export class EntryBibLaTeXAdapter extends Entry {
   }
 
   get issuedDate() {
-    return this.issued ? new Date(this.issued) : null;
+    if (!this.issued)
+      return this._year ? new Date(`${this._year}-01-01T00:00:00Z`) : null;
+    const match = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(this.issued);
+    if (!match) return null;
+    const year = Number(match[1]),
+      month = Number(match[2] || 1),
+      day = Number(match[3] || 1);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
+      ? date
+      : null;
   }
 
   get author(): Author[] {

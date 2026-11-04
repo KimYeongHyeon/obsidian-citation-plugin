@@ -4,17 +4,17 @@
  * Loading animation from
  * https://loading.io/css/
  */
- .zoteroModalLoading {
-   color: var(--text-muted);
-   text-align: center;
- }
+.zoteroModalLoading {
+  color: var(--text-muted);
+  text-align: center;
+}
 .zoteroModalLoadingAnimation {
   display: inline-block;
   width: 80px;
   height: 80px;
 }
 .zoteroModalLoadingAnimation {
-  content: " ";
+  content: ' ';
   display: block;
   width: 32px;
   height: 32px;
@@ -34,7 +34,7 @@
 }
 
 #zoteroSettingTab .text-monospace {
-  font-family: monospace;
+  font-family: var(--font-monospace, monospace);
 }
 
 .zoteroModalResults .suggestion-item {
@@ -57,7 +57,7 @@
 .zoteroCitekey {
   color: #555;
   font-size: 13px;
-  font-family: monospace;
+  font-family: var(--font-monospace, monospace);
   display: inline-block;
   margin-right: 5px;
   padding-right: 5px;
@@ -75,7 +75,7 @@
 .theme-dark .zoteroCitekey {
   color: #aaa;
   font-size: 13px;
-  font-family: monospace;
+  font-family: var(--font-monospace, monospace);
   display: inline-block;
   margin-right: 5px;
   padding-right: 5px;

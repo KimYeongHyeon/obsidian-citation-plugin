@@ -67,6 +67,13 @@ export class Notifier {
 export class WorkerManager {
   private worker = new PromiseWorker(this._worker);
   options: WorkerManagerOptions;
+  private pending = new Set<(error: Error) => void>();
+  private terminated = false;
+  private onWorkerError = () => {
+    this.terminated = true;
+    this.rejectPending(new Error('Citation worker failed'));
+    this._worker.terminate();
+  };
 
   /**
    * Only relevant when `blockingChannel` option is true.
@@ -77,6 +84,8 @@ export class WorkerManager {
 
   constructor(private _worker: Worker, options: WorkerManagerOptions) {
     this.options = { ...workerManagerDefaultOptions, ...options };
+    this._worker.addEventListener('error', this.onWorkerError);
+    this._worker.addEventListener('messageerror', this.onWorkerError);
   }
 
   /**
@@ -86,21 +95,41 @@ export class WorkerManager {
    * the message will be discarded and an error will be thrown.
    */
   async post<TResult = any, TInput = any>(msg: TInput): Promise<TResult> {
+    if (this.terminated) throw new Error('Citation worker has been terminated');
     if (this.options.blockingChannel && this.blocked) {
       throw new WorkerManagerBlocked();
     }
 
     this.blocked = true;
-    return this.worker.postMessage(msg).then(
-      (result) => {
-        this.blocked = false;
-        return result;
-      },
-      (error) => {
-        this.blocked = false;
-        throw error;
-      },
-    );
+    return new Promise<TResult>((resolve, reject) => {
+      this.pending.add(reject);
+      this.worker.postMessage(msg).then(
+        (result) => {
+          this.pending.delete(reject);
+          resolve(result);
+        },
+        (error) => {
+          this.pending.delete(reject);
+          reject(error);
+        },
+      );
+    }).finally(() => {
+      this.blocked = this.pending.size > 0;
+    });
+  }
+
+  private rejectPending(error: Error): void {
+    this.pending.forEach((reject) => reject(error));
+    this.pending.clear();
+    this.blocked = false;
+  }
+
+  terminate(): void {
+    this.terminated = true;
+    this.rejectPending(new Error('Citation worker terminated'));
+    this._worker.removeEventListener('error', this.onWorkerError);
+    this._worker.removeEventListener('messageerror', this.onWorkerError);
+    this._worker.terminate();
   }
 }
 

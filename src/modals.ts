@@ -8,12 +8,15 @@ import {
   SearchMatches,
   SearchMatchPart,
 } from 'obsidian';
+import { pathToFileURL } from 'url';
+import * as path from 'path';
 import CitationPlugin from './main';
 import { Entry } from './types';
 
 // Stub some methods we know are there..
 interface FuzzySuggestModalExt<T> extends FuzzySuggestModal<T> {
   chooser: ChooserExt;
+  updateSuggestions(): void;
 }
 interface ChooserExt {
   useSelectedItem(evt: MouseEvent | KeyboardEvent): void;
@@ -26,10 +29,16 @@ class SearchModal extends FuzzySuggestModal<Entry> {
   loadingEl: HTMLElement;
 
   eventRefs: EventRef[];
+  private keyTimer: ReturnType<typeof setTimeout>;
+  private chosen = false;
+  protected editor: CitationPlugin['editor'];
+  private keydown = (ev: KeyboardEvent) => this.onInputKeydown(ev);
+  private keyup = (ev: KeyboardEvent) => this.onInputKeyup(ev);
 
   constructor(app: App, plugin: CitationPlugin) {
     super(app);
     this.plugin = plugin;
+    this.editor = plugin.editor;
 
     this.resultContainerEl.addClass('zoteroModalResults');
 
@@ -47,6 +56,7 @@ class SearchModal extends FuzzySuggestModal<Entry> {
   onOpen() {
     super.onOpen();
 
+    this.chosen = false;
     this.eventRefs = [
       this.plugin.events.on('library-load-start', () => {
         this.setLoading(true);
@@ -62,14 +72,18 @@ class SearchModal extends FuzzySuggestModal<Entry> {
     // Don't immediately register keyevent listeners. If the modal was triggered
     // by an "Enter" keystroke (e.g. via the Obsidian command dialog), this event
     // will be received here erroneously.
-    setTimeout(() => {
-      this.inputEl.addEventListener('keydown', (ev) => this.onInputKeydown(ev));
-      this.inputEl.addEventListener('keyup', (ev) => this.onInputKeyup(ev));
+    this.keyTimer = setTimeout(() => {
+      this.inputEl.addEventListener('keydown', this.keydown);
+      this.inputEl.addEventListener('keyup', this.keyup);
     }, 200);
   }
 
   onClose() {
+    clearTimeout(this.keyTimer);
+    this.inputEl.removeEventListener('keydown', this.keydown);
+    this.inputEl.removeEventListener('keyup', this.keyup);
     this.eventRefs?.forEach((e) => this.plugin.events.offref(e));
+    super.onClose();
   }
 
   getItems(): Entry[] {
@@ -77,11 +91,19 @@ class SearchModal extends FuzzySuggestModal<Entry> {
       return [];
     }
 
-    return Object.values(this.plugin.library.entries);
+    return Object.values(this.plugin.library?.entries || {});
   }
 
   getItemText(item: Entry): string {
-    return `${item.title} ${item.authorString} ${item.year}`;
+    return [
+      item.title,
+      item.authorString,
+      item.editorString,
+      item.id,
+      item.year,
+    ]
+      .map((value) => value ?? '')
+      .join(' ');
   }
 
   setLoading(loading: boolean): void {
@@ -94,14 +116,28 @@ class SearchModal extends FuzzySuggestModal<Entry> {
       this.inputEl.disabled = false;
       this.inputEl.focus();
 
-      // @ts-ignore: not exposed in API.
-      this.updateSuggestions();
+      ((this as unknown) as FuzzySuggestModalExt<Entry>).updateSuggestions();
     }
+  }
+
+  protected choose(): boolean {
+    if (this.chosen) return false;
+    this.chosen = true;
+    this.close();
+    return true;
+  }
+
+  protected reportError(error: unknown): void {
+    console.error(error);
+    new Notice('Citation action failed. See the console for details.');
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onChooseItem(item: Entry, evt: MouseEvent | KeyboardEvent): void {
-    this.plugin.openLiteratureNote(item.id, false).catch(console.error);
+    if (!this.choose()) return;
+    this.plugin
+      .openLiteratureNote(item.id, false)
+      .catch((error) => this.reportError(error));
   }
 
   renderSuggestion(match: FuzzyMatch<Entry>, el: HTMLElement): void {
@@ -113,7 +149,7 @@ class SearchModal extends FuzzySuggestModal<Entry> {
     const titleEl = container.createEl('span', {
       cls: 'zoteroTitle',
     });
-    container.createEl('span', { cls: 'zoteroCitekey', text: entry.id });
+    const citekeyEl = container.createEl('span', { cls: 'zoteroCitekey' });
 
     const authorsCls = entry.authorString
       ? 'zoteroAuthors'
@@ -137,17 +173,16 @@ class SearchModal extends FuzzySuggestModal<Entry> {
       end: number,
     ) => {
       return matches
-        .map((match: SearchMatchPart) => {
-          const [matchStart, matchEnd] = match;
-          return [
-            matchStart - start,
-            Math.min(matchEnd - start, end),
-          ] as SearchMatchPart;
-        })
-        .filter((match: SearchMatchPart) => {
-          const [matchStart, matchEnd] = match;
-          return matchStart >= 0;
-        });
+        .filter(
+          ([matchStart, matchEnd]) => matchStart < end && matchEnd > start,
+        )
+        .map(
+          ([matchStart, matchEnd]) =>
+            [
+              Math.max(matchStart, start) - start,
+              Math.min(matchEnd, end) - start,
+            ] as SearchMatchPart,
+        );
     };
 
     // Now highlight matched strings within each element
@@ -155,6 +190,17 @@ class SearchModal extends FuzzySuggestModal<Entry> {
       titleEl,
       entryTitle,
       shiftMatches(allMatches, 0, entryTitle.length),
+    );
+    const citekeyOffset =
+      authorStringOffset +
+      (entry.authorString || '').length +
+      1 +
+      (entry.editorString || '').length +
+      1;
+    renderMatches(
+      citekeyEl,
+      entry.id,
+      shiftMatches(allMatches, citekeyOffset, citekeyOffset + entry.id.length),
     );
     if (entry.authorString) {
       renderMatches(
@@ -176,7 +222,7 @@ class SearchModal extends FuzzySuggestModal<Entry> {
   }
 
   onInputKeyup(ev: KeyboardEvent) {
-    if (ev.key == 'Enter' || ev.key == 'Tab') {
+    if (!this.chosen && (ev.key == 'Enter' || ev.key == 'Tab')) {
       ((this as unknown) as FuzzySuggestModalExt<Entry>).chooser.useSelectedItem(
         ev,
       );
@@ -199,20 +245,25 @@ export class OpenNoteModal extends SearchModal {
   }
 
   onChooseItem(item: Entry, evt: MouseEvent | KeyboardEvent): void {
+    if (!this.choose()) return;
     if (evt instanceof MouseEvent || evt.key == 'Enter') {
       const newPane =
         evt instanceof KeyboardEvent && (evt as KeyboardEvent).ctrlKey;
-      this.plugin.openLiteratureNote(item.id, newPane);
+      this.plugin
+        .openLiteratureNote(item.id, newPane)
+        .catch((error) => this.reportError(error));
     } else if (evt.key == 'Tab') {
       if (evt.shiftKey) {
         const files = item.files || [];
-        const pdfPaths = files.filter((path) =>
-          path.toLowerCase().endsWith('pdf'),
+        const pdfPath = files.find(
+          (file) => path.isAbsolute(file) && /\.pdf$/i.test(file),
         );
-        if (pdfPaths.length == 0) {
+        if (item.zoteroPdfURI) {
+          open(item.zoteroPdfURI);
+        } else if (!pdfPath) {
           new Notice('This reference has no associated PDF files.');
         } else {
-          open(`file://${pdfPaths[0]}`);
+          open(pathToFileURL(pdfPath).href);
         }
       } else {
         open(item.zoteroSelectURI);
@@ -234,7 +285,10 @@ export class InsertNoteLinkModal extends SearchModal {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onChooseItem(item: Entry, evt: unknown): void {
-    this.plugin.insertLiteratureNoteLink(item.id).catch(console.error);
+    if (!this.choose()) return;
+    this.plugin
+      .insertLiteratureNoteLink(item.id, this.editor)
+      .catch((error) => this.reportError(error));
   }
 }
 
@@ -254,7 +308,10 @@ export class InsertNoteContentModal extends SearchModal {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onChooseItem(item: Entry, evt: unknown): void {
-    this.plugin.insertLiteratureNoteContent(item.id).catch(console.error);
+    if (!this.choose()) return;
+    this.plugin
+      .insertLiteratureNoteContent(item.id, this.editor)
+      .catch((error) => this.reportError(error));
   }
 }
 
@@ -272,9 +329,30 @@ export class InsertCitationModal extends SearchModal {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onChooseItem(item: Entry, evt: MouseEvent | KeyboardEvent): void {
+    if (!this.choose()) return;
     const isAlternative = evt instanceof KeyboardEvent && evt.shiftKey;
     this.plugin
-      .insertMarkdownCitation(item.id, isAlternative)
-      .catch(console.error);
+      .insertMarkdownCitation(item.id, isAlternative, this.editor)
+      .catch((error) => this.reportError(error));
+  }
+}
+
+export class InsertZoteroLinkModal extends SearchModal {
+  constructor(app: App, plugin: CitationPlugin) {
+    super(app, plugin);
+    this.setInstructions([
+      { command: '↑↓', purpose: 'to navigate' },
+      { command: '↵', purpose: 'to insert Zotero PDF link' },
+      { command: 'shift ↵', purpose: 'to insert Zotero item link' },
+      { command: 'esc', purpose: 'to dismiss' },
+    ]);
+  }
+
+  onChooseItem(item: Entry, evt: MouseEvent | KeyboardEvent): void {
+    if (!this.choose()) return;
+    const pdf = !(evt instanceof KeyboardEvent && evt.shiftKey);
+    this.plugin
+      .insertZoteroLink(item.id, pdf, this.editor)
+      .catch((error) => this.reportError(error));
   }
 }

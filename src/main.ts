@@ -1,20 +1,17 @@
 import {
   FileSystemAdapter,
-  MarkdownSourceView,
-  MarkdownView,
   normalizePath,
   Plugin,
+  Notice,
   TFile,
 } from 'obsidian';
 import * as path from 'path';
 import * as chokidar from 'chokidar';
-import * as CodeMirror from 'codemirror';
 
 import {
   compile as compileTemplate,
   TemplateDelegate as Template,
 } from 'handlebars';
-
 
 import CitationEvents from './events';
 import {
@@ -22,8 +19,8 @@ import {
   InsertNoteLinkModal,
   InsertNoteContentModal,
   OpenNoteModal,
+  InsertZoteroLinkModal,
 } from './modals';
-import { VaultExt } from './obsidian-extensions.d';
 import { CitationSettingTab, CitationsPluginSettings } from './settings';
 import {
   Entry,
@@ -32,18 +29,27 @@ import {
   EntryCSLAdapter,
   IIndexable,
   Library,
+  loadEntries,
 } from './types';
 import {
   DISALLOWED_FILENAME_CHARACTERS_RE,
   Notifier,
   WorkerManager,
-  WorkerManagerBlocked,
 } from './util';
 import LoadWorker from 'web-worker:./worker';
 
+export interface CitationEditor {
+  replaceSelection(text: string): void;
+}
+
 export default class CitationPlugin extends Plugin {
   settings: CitationsPluginSettings;
-  library: Library;
+  library = new Library({});
+  private watcher: chokidar.FSWatcher;
+  private watchedPath: string;
+  private loadQueue: Promise<Library> = Promise.resolve(this.library);
+  private loading = false;
+  private unloaded = false;
 
   // Template compilation options
   private templateSettings = {
@@ -63,12 +69,12 @@ export default class CitationPlugin extends Plugin {
     'Unable to access literature note. Please check that the literature note folder exists, or update the Citations plugin settings.',
   );
 
-  get editor(): CodeMirror.Editor {
-    const view = this.app.workspace.activeLeaf.view;
-    if (!(view instanceof MarkdownView)) return null;
-
-    const sourceView = view.sourceMode;
-    return (sourceView as MarkdownSourceView).cmEditor;
+  get editor(): CitationEditor {
+    const workspace = this.app.workspace as any;
+    const active = workspace.activeEditor?.editor;
+    if (typeof active?.replaceSelection === 'function') return active;
+    const fallback = workspace.activeLeaf?.view?.editor;
+    return typeof fallback?.replaceSelection === 'function' ? fallback : null;
   }
 
   async loadSettings(): Promise<void> {
@@ -97,41 +103,21 @@ export default class CitationPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  onload(): void {
-    this.loadSettings().then(() => this.init());
+  async onload(): Promise<void> {
+    await this.loadSettings();
+    await this.init();
+  }
+
+  onunload(): void {
+    this.unloaded = true;
+    this.watcher?.close();
+    this.loadWorker.terminate();
+    this.loadErrorNotifier.unload();
+    this.literatureNoteErrorNotifier.unload();
   }
 
   async init(): Promise<void> {
-    if (this.settings.citationExportPath) {
-      // Load library for the first time
-      this.loadLibrary();
-
-      // Set up a watcher to refresh whenever the export is updated
-      try {
-        // Wait until files are finished being written before going ahead with
-        // the refresh -- here, we request that `change` events be accumulated
-        // until nothing shows up for 500 ms
-        // TODO magic number
-        const watchOptions = {
-          awaitWriteFinish: {
-            stabilityThreshold: 500,
-          },
-        };
-
-        chokidar
-          .watch(
-            this.resolveLibraryPath(this.settings.citationExportPath),
-            watchOptions,
-          )
-          .on('change', () => {
-            this.loadLibrary();
-          });
-      } catch {
-        this.loadErrorNotifier.show();
-      }
-    } else {
-      // TODO show warning?
-    }
+    await this.loadLibrary();
 
     this.addCommand({
       id: 'open-literature-note',
@@ -180,6 +166,20 @@ export default class CitationPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: 'insert-zotero-link',
+      name: 'Insert Zotero link',
+      callback: () => new InsertZoteroLinkModal(this.app, this).open(),
+    });
+
+    this.addCommand({
+      id: 'note-from-clipboard',
+      name: 'Create literature note from clipboard',
+      callback: () => {
+        this.openFromClipboard();
+      },
+    });
+
     this.addSettingTab(new CitationSettingTab(this.app, this));
   }
 
@@ -195,84 +195,112 @@ export default class CitationPlugin extends Plugin {
     return path.resolve(vaultRoot, rawPath);
   }
 
-  async loadLibrary(): Promise<Library> {
-    console.debug('Citation plugin: Reloading library');
-    if (this.settings.citationExportPath) {
-      const filePath = this.resolveLibraryPath(
-        this.settings.citationExportPath,
-      );
+  private libraryFromEntries(entries: EntryData[], format: string): Library {
+    const adapter: new (data: EntryData) => Entry =
+      format === 'biblatex' ? EntryBibLaTeXAdapter : EntryCSLAdapter;
+    const idKey = format === 'biblatex' ? 'key' : 'id';
+    return new Library(
+      Object.fromEntries(
+        entries.map((entry) => [
+          (entry as IIndexable)[idKey],
+          new adapter(entry),
+        ]),
+      ),
+    );
+  }
 
-      // Unload current library.
-      this.events.trigger('library-load-start');
-      this.library = null;
-
-      return FileSystemAdapter.readLocalFile(filePath)
-        .then((buffer) => {
-          // If there is a remaining error message, hide it
-          this.loadErrorNotifier.hide();
-
-          // Decode file as UTF-8.
-          const dataView = new DataView(buffer);
-          const decoder = new TextDecoder('utf8');
-          const value = decoder.decode(dataView);
-
-          return this.loadWorker.post({
-            databaseRaw: value,
-            databaseType: this.settings.citationExportFormat,
-          });
-        })
-        .then((entries: EntryData[]) => {
-          let adapter: new (data: EntryData) => Entry;
-          let idKey: string;
-
-          switch (this.settings.citationExportFormat) {
-            case 'biblatex':
-              adapter = EntryBibLaTeXAdapter;
-              idKey = 'key';
-              break;
-            case 'csl-json':
-              adapter = EntryCSLAdapter;
-              idKey = 'id';
-              break;
-          }
-
-          this.library = new Library(
-            Object.fromEntries(
-              entries.map((e) => [(e as IIndexable)[idKey], new adapter(e)]),
-            ),
-          );
-          console.debug(
-            `Citation plugin: successfully loaded library with ${this.library.size} entries.`,
-          );
-
-          this.events.trigger('library-load-complete');
-
-          return this.library;
-        })
-        .catch((e) => {
-          if (e instanceof WorkerManagerBlocked) {
-            // Silently catch WorkerManager error, which will be thrown if the
-            // library is already being loaded
-            return;
-          }
-
-          console.error(e);
-          this.loadErrorNotifier.show();
-
-          return null;
-        });
-    } else {
-      console.warn(
-        'Citations plugin: citation export path is not set. Please update plugin settings.',
-      );
+  async openFromClipboard(): Promise<void> {
+    try {
+      const raw = await navigator.clipboard.readText();
+      const format = raw.trimStart().startsWith('@') ? 'biblatex' : 'csl-json';
+      const entries = loadEntries(raw, format);
+      if (entries.length !== 1)
+        throw new Error('Clipboard must contain exactly one reference.');
+      const library = this.libraryFromEntries(entries, format);
+      const citekey = Object.keys(library.entries)[0];
+      if (!citekey || citekey === 'undefined')
+        throw new Error('Clipboard reference has no citation key.');
+      const file = await this.getOrCreateLiteratureNoteFile(citekey, library);
+      await this.app.workspace.getLeaf(false).openFile(file);
+    } catch (error) {
+      console.error(error);
+      new Notice(`Unable to create literature note: ${error.message}`);
     }
   }
 
-  /**
-   * Returns true iff the library is currently being loaded on the worker thread.
-   */
+  loadLibrary(): Promise<Library> {
+    const rawPath = this.settings.citationExportPath;
+    const format = this.settings.citationExportFormat;
+    const resolved = rawPath ? this.resolveLibraryPath(rawPath) : '';
+    if (resolved !== this.watchedPath) {
+      this.watcher?.close();
+      this.watcher = null;
+      this.watchedPath = resolved;
+      if (resolved) {
+        try {
+          this.watcher = chokidar
+            .watch(resolved, {
+              awaitWriteFinish: { stabilityThreshold: 500 },
+              ignoreInitial: true,
+            })
+            .on('change', () => {
+              this.loadLibrary();
+            })
+            .on('add', () => {
+              this.loadLibrary();
+            })
+            .on('unlink', () => {
+              this.loadLibrary();
+            });
+          this.watcher.on('error', (error) => {
+            console.error(error);
+            this.loadErrorNotifier.show();
+          });
+        } catch (error) {
+          console.error(error);
+          this.loadErrorNotifier.show();
+        }
+      }
+    }
+    this.loading = true;
+    this.events.trigger('library-load-start');
+    const run = this.loadQueue.then(async () => {
+      if (this.unloaded) return this.library;
+      try {
+        if (!resolved) {
+          this.library = new Library({});
+          return this.library;
+        }
+        const buffer = await FileSystemAdapter.readLocalFile(resolved);
+        const value = new TextDecoder('utf8').decode(new DataView(buffer));
+        const entries = await this.loadWorker.post<EntryData[]>({
+          databaseRaw: value,
+          databaseType: format,
+        });
+        if (this.unloaded) return this.library;
+        this.library = this.libraryFromEntries(entries, format);
+        this.loadErrorNotifier.hide();
+      } catch (error) {
+        if (!this.unloaded) {
+          console.error(error);
+          this.loadErrorNotifier.show();
+        }
+        return null;
+      }
+      return this.library;
+    });
+    this.loadQueue = run;
+    run.finally(() => {
+      if (!this.unloaded && this.loadQueue === run) {
+        this.loading = false;
+        this.events.trigger('library-load-complete');
+      }
+    });
+    return run;
+  }
+
   get isLibraryLoading(): boolean {
-    return this.loadWorker.blocked;
+    return this.loading;
   }
 
   get literatureNoteTitleTemplate(): Template {
@@ -303,22 +331,22 @@ export default class CitationPlugin extends Plugin {
     );
   }
 
-  getTitleForCitekey(citekey: string): string {
+  getTitleForCitekey(citekey: string, library = this.library): string {
     const unsafeTitle = this.literatureNoteTitleTemplate(
-      this.library.getTemplateVariablesForCitekey(citekey),
+      library.getTemplateVariablesForCitekey(citekey),
     );
     return unsafeTitle.replace(DISALLOWED_FILENAME_CHARACTERS_RE, '_');
   }
 
-  getPathForCitekey(citekey: string): string {
-    const title = this.getTitleForCitekey(citekey);
+  getPathForCitekey(citekey: string, library = this.library): string {
+    const title = this.getTitleForCitekey(citekey, library);
     // TODO escape note title
     return path.join(this.settings.literatureNoteFolder, `${title}.md`);
   }
 
-  getInitialContentForCitekey(citekey: string): string {
+  getInitialContentForCitekey(citekey: string, library = this.library): string {
     return this.literatureNoteContentTemplate(
-      this.library.getTemplateVariablesForCitekey(citekey),
+      library.getTemplateVariablesForCitekey(citekey),
     );
   }
 
@@ -338,83 +366,133 @@ export default class CitationPlugin extends Plugin {
    * Run a case-insensitive search for the literature note file corresponding to
    * the given citekey. If no corresponding file is found, create one.
    */
-  async getOrCreateLiteratureNoteFile(citekey: string): Promise<TFile> {
-    const path = this.getPathForCitekey(citekey);
-    const normalizedPath = normalizePath(path);
-
-    let file = this.app.vault.getAbstractFileByPath(normalizedPath);
-    if (file == null) {
-      // First try a case-insensitive lookup.
+  async getOrCreateLiteratureNoteFile(
+    citekey: string,
+    library = this.library,
+  ): Promise<TFile> {
+    try {
+      const folder = this.settings.literatureNoteFolder.replace(/\\/g, '/');
+      if (
+        folder.startsWith('/') ||
+        /^[A-Za-z]:/.test(folder) ||
+        folder.split('/').includes('..')
+      ) {
+        throw new Error(
+          'Literature note folder must be a path inside the vault.',
+        );
+      }
+      const title = this.getTitleForCitekey(citekey, library);
+      if (!title || title === '.' || title === '..')
+        throw new Error('Literature note title is empty or invalid.');
+      const target = normalizePath(path.posix.join(folder, `${title}.md`));
+      const exact = this.app.vault.getAbstractFileByPath(target);
+      if (exact) {
+        if (!(exact instanceof TFile))
+          throw new Error('Literature note path is not a file.');
+        return exact;
+      }
       const matches = this.app.vault
         .getMarkdownFiles()
-        .filter((f) => f.path.toLowerCase() == normalizedPath.toLowerCase());
-      if (matches.length > 0) {
-        file = matches[0];
-      } else {
-        try {
-          file = await this.app.vault.create(
-            path,
-            this.getInitialContentForCitekey(citekey),
-          );
-        } catch (exc) {
-          this.literatureNoteErrorNotifier.show();
-          throw exc;
-        }
+        .filter(
+          (file) => file.name.toLowerCase() === `${title}.md`.toLowerCase(),
+        );
+      if (matches.length > 1)
+        throw new Error(`Multiple literature notes match ${title}.`);
+      if (matches.length === 1) return matches[0];
+      const parts = target.split('/');
+      parts.pop();
+      let current = '';
+      for (const part of parts) {
+        current = current ? `${current}/${part}` : part;
+        if (!this.app.vault.getAbstractFileByPath(current))
+          await this.app.vault.createFolder(current);
       }
+      return await this.app.vault.create(
+        target,
+        this.getInitialContentForCitekey(citekey, library),
+      );
+    } catch (error) {
+      this.literatureNoteErrorNotifier.show(error.message);
+      throw error;
     }
-
-    return file as TFile;
   }
 
   async openLiteratureNote(citekey: string, newPane: boolean): Promise<void> {
-    this.getOrCreateLiteratureNoteFile(citekey)
-      .then((file: TFile) => {
-        this.app.workspace.getLeaf(newPane).openFile(file);
-      })
-      .catch(console.error);
+    const file = await this.getOrCreateLiteratureNoteFile(citekey);
+    await this.app.workspace.getLeaf(newPane).openFile(file);
   }
 
-  async insertLiteratureNoteLink(citekey: string): Promise<void> {
-    this.getOrCreateLiteratureNoteFile(citekey)
-      .then((file: TFile) => {
-        const useMarkdown: boolean = (<VaultExt>this.app.vault).getConfig(
-          'useMarkdownLinks',
-        );
-        const title = this.getTitleForCitekey(citekey);
-
-        let linkText: string;
-        if (useMarkdown) {
-          const uri = encodeURI(
-            this.app.metadataCache.fileToLinktext(file, '', false),
-          );
-          linkText = `[${title}](${uri})`;
-        } else {
-          linkText = `[[${title}]]`;
-        }
-
-        this.editor.replaceSelection(linkText);
-      })
-      .catch(console.error);
+  async insertLiteratureNoteLink(
+    citekey: string,
+    editor = this.editor,
+  ): Promise<void> {
+    if (!editor) {
+      new Notice('No active editor. Open a note or canvas text editor first.');
+      return;
+    }
+    const sourcePath =
+      (this.app.workspace as any).activeEditor?.file?.path || '';
+    const file = await this.getOrCreateLiteratureNoteFile(citekey);
+    const useMarkdown = (this.app.vault as any).getConfig('useMarkdownLinks');
+    const link = (this.app.fileManager.generateMarkdownLink as any)(
+      file,
+      sourcePath,
+      '',
+      useMarkdown ? citekey : undefined,
+    );
+    editor.replaceSelection(link);
   }
 
-  /**
-   * Format literature note content for a given reference and insert in the
-   * currently active pane.
-   */
-  async insertLiteratureNoteContent(citekey: string): Promise<void> {
-    const content = this.getInitialContentForCitekey(citekey);
-    this.editor.replaceRange(content, this.editor.getCursor());
+  async insertLiteratureNoteContent(
+    citekey: string,
+    editor = this.editor,
+  ): Promise<void> {
+    if (!editor) {
+      new Notice('No active editor. Open a note or canvas text editor first.');
+      return;
+    }
+    editor.replaceSelection(this.getInitialContentForCitekey(citekey));
   }
 
   async insertMarkdownCitation(
     citekey: string,
     alternative = false,
+    editor = this.editor,
   ): Promise<void> {
-    const func = alternative
-      ? this.getAlternativeMarkdownCitationForCitekey
-      : this.getMarkdownCitationForCitekey;
-    const citation = func.bind(this)(citekey);
+    if (!editor) {
+      new Notice('No active editor. Open a note or canvas text editor first.');
+      return;
+    }
+    const citation = alternative
+      ? this.getAlternativeMarkdownCitationForCitekey(citekey)
+      : this.getMarkdownCitationForCitekey(citekey);
+    editor.replaceSelection(citation);
+  }
 
-    this.editor.replaceRange(citation, this.editor.getCursor());
+  getEntryZoteroLinkForCitekey(citekey: string): string {
+    return this.library.entries[citekey].zoteroSelectURI;
+  }
+
+  getPdfZoteroLinkForCitekey(citekey: string): string {
+    return this.library.entries[citekey].zoteroPdfURI;
+  }
+
+  async insertZoteroLink(
+    citekey: string,
+    pdf = false,
+    editor = this.editor,
+  ): Promise<void> {
+    if (!editor) {
+      new Notice('No active editor. Open a note or canvas text editor first.');
+      return;
+    }
+    const link = pdf
+      ? this.getPdfZoteroLinkForCitekey(citekey)
+      : this.getEntryZoteroLinkForCitekey(citekey);
+    if (!link) {
+      new Notice('This reference has no Zotero link.');
+      return;
+    }
+    editor.replaceSelection(link);
   }
 }

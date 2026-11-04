@@ -1,4 +1,20 @@
-# obsidian-citation-plugin
+# Citations — maintained fork
+
+This is an independent maintenance fork of [Jon Gauthier's Citations plugin](https://github.com/hans/obsidian-citation-plugin), retaining its MIT license and plugin ID. It is not an official upstream release.
+
+## Install and update this fork
+
+1. Install and enable [BRAT](https://github.com/TfTHacker/obsidian42-brat) in Obsidian.
+2. In BRAT, choose **Add a beta plugin**, enter `KimYeongHyeon/obsidian-citation-plugin`, and select the latest release.
+3. Enable **Citations** in Community plugins. If Citations is already installed, BRAT replaces its program files and preserves its settings and notes.
+4. Keep BRAT's startup update check enabled, or use BRAT's update command to receive this fork's releases.
+
+Use BRAT to manage this fork. Reinstalling Citations from the community plugin catalog installs the original upstream build instead.
+
+Source, issue reports, and releases: [KimYeongHyeon/obsidian-citation-plugin](https://github.com/KimYeongHyeon/obsidian-citation-plugin). See [the maintenance record](docs/MAINTENANCE.md) for the upstream PR review, issue triage, verification, and limits.
+
+## Original plugin
+
 
 This plugin for [Obsidian](https://obsidian.md) integrates your academic reference manager with the Obsidian editing experience.
 
@@ -8,7 +24,7 @@ The plugin supports reading bibliographies in [BibTeX / BibLaTeX `.bib` format][
 
 ## Setup
 
-You can install this plugin via the Obsidian "Third-party plugin interface." It requires Obsidian 0.9.20 or higher.
+The original plugin is listed in the Obsidian community plugin catalog. For this fork, use the BRAT instructions above, then toggle Citations on under **Community plugins**.
 
 Once the plugin is installed, you must provide it with a bibliography file:
 
@@ -18,16 +34,19 @@ Once the plugin is installed, you must provide it with a bibliography file:
   - You can optionally choose "Keep updated" to automatically re-export the collection -- this is recommended!
 - If you use other reference managers, check their documentation for BibLaTeX or CSL-JSON export support. We plan to officially support other managers in the future.
 
-Now open the Obsidian preferences and view the "Citations" tab. Paste the path to the exported file (`.bib` or `.json`, depending on the format you chose) in the text field labeled "Citation export path." After closing the settings dialog, you should now be able to search your references from within Obsidian!
+Now open Obsidian **Settings → Community plugins → Citations**. Paste the path to the exported file (`.bib` or `.json`, depending on the format you chose) in the text field labeled "Citation export path." After closing the settings dialog, you should now be able to search your references from within Obsidian!
 
 ## Usage
 
-The plugin offers four simple features at the moment:
+Available commands:
 
 1. **Open literature note** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>): automatically create or open a literature note for a particular reference. The title, folder, and initial content of the note can be configured in the plugin settings.
 2. **Insert literature note reference** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>): insert a link to the literature note corresponding to a particular reference.
 3. **Insert literature note content in the current pane** (no hotkey by default): insert content describing a particular reference into the current pane. (This can be useful for updating literature notes you already have but which are missing reference information.)
 4. **Insert Markdown citation** (no hotkey by default): insert a [Pandoc-style citation][3] for a particular reference. (The exact format of the citation can be configured in the plugin settings.)
+
+5. **Insert Zotero link**: insert an item URI, or a PDF URI when attachment identity and library context are available.
+6. **Create literature note from clipboard**: accept exactly one BibTeX or CSL JSON reference without replacing the loaded bibliography.
 
 ### Templates
 You can set up your own template for both the title and content of literature notes. The following variables can be used:
@@ -49,16 +68,38 @@ You can set up your own template for both the title and content of literature no
 * {{URL}}
 * {{year}}
 * {{zoteroSelectURI}}
+* {{editorString}}
+* {{type}}
+* {{keywords}}
+* {{issued}}
+* {{ISBN}}
+* {{language}}
+* {{issue}}
+* {{zoteroPdfHash}}
+* {{zoteroPdfURI}}
 ```
 For example, your literature note title template can simply be `@{{citekey}}` and the content template can look like:
 ```
 ---
-title: {{title}}
-authors: {{authorString}}
+title: {{yaml title}}
+authors: {{yaml authorString}}
 year: {{year}}
 ---
 {{abstract}}
 ```
+
+## Template and workflow notes
+
+- Use `{{yaml title}}`, `{{yaml authorString}}`, or `{{yaml containerTitle}}` for YAML property values. The helper quotes and escapes colons, quotes, backslashes, and newlines. Existing custom templates are preserved; quoting a value manually does not escape embedded quotes.
+- BibLaTeX title capitalization is preserved. Export with **Better BibLaTeX** or **Better CSL JSON**, and enable the exporter's **Keep updated** option. This plugin watches the export file; it does not read Zotero's database directly.
+- Loading a bibliography makes it searchable through the **Citations** commands. It does not import every entry as a note automatically.
+- `{{issued}}` is an ISO calendar date when a valid issue date is present. A year-only date uses January 1; a missing day uses the first day of that month. Missing or invalid dates remain empty.
+- `{{zoteroSelectURI}}` uses a native Zotero item URI when available. Citekey-based fallback links depend on Better BibTeX and the Zotero version, and may still fail with Zotero 9+ (upstream #192/#287). A citekey is not a Zotero item key.
+- Zotero PDF links require a validated attachment key and known library context. A local file path alone does not identify a group library.
+- Existing literature notes are reused, including moved notes. The configured path takes priority; otherwise a single matching filename anywhere in the vault is reused. Filename matching cannot distinguish an unrelated note with that name. Multiple matches produce an error. Citations does not overwrite existing note content.
+- Duplicate citation IDs produce a warning and retain the last record, matching the original plugin. If their titles or DOIs differ, earlier values are excluded from the loaded library; resolve the duplicate in your reference manager. Nonfatal BibTeX parser warnings are summarized without logging bibliography contents. Fatal parse errors preserve the previously loaded library.
+- BibTeX note angle brackets can still be changed by the parser (upstream #150); this release does not silently replace Spanish punctuation to work around it.
+- This is a desktop plugin. Mobile support, live citation rendering, and third-party view compatibility are not implied by the release.
 
 ## License
 

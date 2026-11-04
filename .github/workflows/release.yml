@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    tags: ['*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+      - run: npm ci --omit=optional
+      - run: npm run build
+      - run: npm run check:build
+      - run: npm test -- --runInBand
+      - name: Verify tag matches manifest version
+        run: test "$GITHUB_REF_NAME" = "$(node -p "require('./manifest.json').version")"
+      - name: Publish release
+        run: gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css --verify-tag --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

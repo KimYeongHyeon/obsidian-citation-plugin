@@ -45,7 +45,7 @@ const expectedRender: Record<string, string>[] = [
     page: undefined,
     title:
       'Blackbox meets blackbox: Representational Similarity and Stability Analysis of Neural Language Models and Brains',
-    titleShort: "Blackbox meets blackbox",
+    titleShort: 'Blackbox meets blackbox',
     URL: 'http://arxiv.org/abs/1906.01539',
     year: '2019',
     zoteroSelectURI: 'zotero://select/items/@abnar2019blackbox',
@@ -143,7 +143,7 @@ function loadBibLaTeXLibrary(entries: EntryDataBibLaTeX[]): Library {
       ]),
     ),
   );
-};
+}
 
 const renderAdvancedTemplate = (
   loadLibrary: () => Library,
@@ -216,7 +216,7 @@ describe('biblatex regression tests', () => {
     const warnCallback = jest.fn();
     jest.spyOn(global.console, 'error').mockImplementation(warnCallback);
 
-    expect(load).not.toThrowError();
+    expect(load).toThrow(/Fatal BibLaTeX parse error/);
     expect(warnCallback.mock.calls.length).toBe(1);
   });
 });

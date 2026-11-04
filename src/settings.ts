@@ -3,11 +3,15 @@ import {
   App,
   DropdownComponent,
   FileSystemAdapter,
+  Notice,
   PluginSettingTab,
   Setting,
 } from 'obsidian';
 
+import { registerHelper } from 'handlebars';
 import CitationPlugin from './main';
+
+registerHelper('yaml', (value) => JSON.stringify(String(value ?? '')));
 import { IIndexable, DatabaseType, TEMPLATE_VARIABLES } from './types';
 
 const CITATION_DATABASE_FORMAT_LABELS: Record<DatabaseType, string> = {
@@ -23,8 +27,8 @@ export class CitationsPluginSettings {
   literatureNoteFolder = 'Reading notes';
   literatureNoteContentTemplate: string =
     '---\n' +
-    'title: {{title}}\n' +
-    'authors: {{authorString}}\n' +
+    'title: {{yaml title}}\n' +
+    'authors: {{yaml authorString}}\n' +
     'year: {{year}}\n' +
     '---\n\n';
 
@@ -46,9 +50,11 @@ export class CitationSettingTab extends PluginSettingTab {
 
   open(): void {
     super.open();
-    this.checkCitationExportPath(
-      this.plugin.settings.citationExportPath,
-    ).then(() => this.showCitationExportPathSuccess());
+    this.checkCitationExportPath(this.plugin.settings.citationExportPath).then(
+      (success) => {
+        if (success) this.showCitationExportPathSuccess();
+      },
+    );
   }
 
   addValueChangeCallback<T extends HTMLTextAreaElement | HTMLInputElement>(
@@ -58,11 +64,13 @@ export class CitationSettingTab extends PluginSettingTab {
   ): void {
     component.onChange(async (value) => {
       (this.plugin.settings as IIndexable)[settingsKey] = value;
-      this.plugin.saveSettings().then(() => {
-        if (cb) {
-          cb(value);
-        }
-      });
+      try {
+        await this.plugin.saveSettings();
+        if (cb) cb(value);
+      } catch (error) {
+        console.error(error);
+        new Notice('Unable to save citation settings.');
+      }
     });
   }
 
@@ -89,20 +97,8 @@ export class CitationSettingTab extends PluginSettingTab {
         this.buildValueInput(
           component.addOptions(CITATION_DATABASE_FORMAT_LABELS),
           'citationExportFormat',
-          (value) => {
-            this.checkCitationExportPath(
-              this.plugin.settings.citationExportPath,
-            ).then((success) => {
-              if (success) {
-                this.citationPathSuccessEl.addClass('d-none');
-                this.citationPathLoadingEl.removeClass('d-none');
-
-                this.plugin.loadLibrary().then(() => {
-                  this.citationPathLoadingEl.addClass('d-none');
-                  this.showCitationExportPathSuccess();
-                });
-              }
-            });
+          () => {
+            void this.reloadLibrary(this.plugin.settings.citationExportPath);
           },
         ),
       );
@@ -120,13 +116,7 @@ export class CitationSettingTab extends PluginSettingTab {
           input.setPlaceholder('/path/to/export.json'),
           'citationExportPath',
           (value) => {
-            this.checkCitationExportPath(value).then(
-              (success) =>
-                success &&
-                this.plugin
-                  .loadLibrary()
-                  .then(() => this.showCitationExportPathSuccess()),
-            );
+            void this.reloadLibrary(value);
           },
         ),
       );
@@ -240,6 +230,18 @@ export class CitationSettingTab extends PluginSettingTab {
       );
   }
 
+  private async reloadLibrary(filePath: string): Promise<void> {
+    this.citationPathSuccessEl.addClass('d-none');
+    const valid = await this.checkCitationExportPath(filePath);
+    try {
+      const library = await this.plugin.loadLibrary();
+      if (valid && library) this.showCitationExportPathSuccess();
+    } catch (error) {
+      console.error(error);
+      new Notice('Unable to load citation database.');
+    }
+  }
+
   /**
    * Returns true iff the path exists; displays error as a side-effect
    */
@@ -247,6 +249,7 @@ export class CitationSettingTab extends PluginSettingTab {
     this.citationPathLoadingEl.addClass('d-none');
 
     try {
+      if (!filePath) throw new Error('Citation database path is empty');
       await FileSystemAdapter.readLocalFile(
         this.plugin.resolveLibraryPath(filePath),
       );
