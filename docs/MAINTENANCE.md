@@ -1,3 +1,26 @@
+# Maintenance record — 0.5.1
+
+The [status matrix](STATUS.md) separately records resolution, code inclusion, release version, and evidence for all 160 issues and 15 PRs. It preserves requests and unverified reports rather than counting them as fixed.
+
+## Changes in 0.5.1
+
+- Preserve original BibTeX note angle brackets without reversing genuine Spanish punctuation or disabling TeX formatting/link conversion. A protected second parser pass replaces only note fields; other parsed metadata stays unchanged.
+- Resolve citekey-only Zotero item and PDF links through Better BibTeX JSON-RPC. Explicit native URIs continue to work without lookup; ambiguous or missing items fail visibly. Local-only Zotero library URIs are supported.
+- Resolve URI variables only when a title, note, or citation template references them, including `entry` paths. Existing notes are not rewritten.
+- Use Node HTTP with a fixed loopback endpoint, explicit content length, timeout, HTTP/JSON/RPC validation. Obsidian requestUrl returned ERR_EMPTY_RESPONSE in the actual environment while Node HTTP returned the correct item. No network dependency was added.
+- Check local PDF existence and report Electron launch failures.
+
+## 0.5.1 verification
+
+- Actual Obsidian 1.15.1 and Zotero 10.0.7 on macOS: an exact citekey resolved to its native item and PDF attachment; templates rendered the same verified URIs.
+- Actual Citations search → Shift+Tab changed the Zotero reader from a different paper to the requested Reference-Free Human-Object Interaction Editing PDF. The rendered title, authors, and 35-page viewer were observed. Tab selected the correct item; its Citation Key field matched the input.
+- Original bibliography remains 990 parsed records / 989 library entries. The two-pass parser test took 5.722 seconds in a separate Node check; this is not an app startup benchmark. Parser warnings were aggregated once.
+- `npm test -- --runInBand`: 9 suites / 48 tests passed. Type checking, production build, native-class gate, and ESLint (zero errors) passed. Distribution identity and BRAT restart verification are recorded after completion.
+
+The real PDF check covered Zotero's reader on macOS. Windows/Linux, arbitrary external PDF applications, mobile, and the declared minimum Obsidian version were not exercised. Citekey lookup requires a running Zotero with Better BibTeX; ordinary bibliography search does not.
+
+---
+
 # Maintenance record — 0.5.0
 
 This independent fork starts from upstream `2edeecea` (Citations 0.4.5). Upstream retains authorship and the MIT license. Community PRs were reviewed and adapted rather than merged blindly. This is not an official upstream release.

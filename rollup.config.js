@@ -13,7 +13,7 @@ export default {
     format: 'cjs',
     exports: 'default',
   },
-  external: ['obsidian', 'path', 'fs', 'util', 'events', 'stream', 'os', 'url'],
+  external: ['obsidian', 'path', 'fs', 'http', 'util', 'events', 'stream', 'os', 'url'],
   plugins: [
     /**
      * Chokidar hacks to get working with platform-general Electron build.

@@ -146,6 +146,36 @@ export function loadEntries(
         `Fatal BibLaTeX parse error at line ${error.line}, column ${error.column}: ${error.message}`,
       );
     }
+    if (/[<>]/.test(databaseRaw)) {
+      let marker = '\uE000';
+      while (databaseRaw.includes(marker)) marker += '\uE000';
+      const protectedRaw = databaseRaw.replace(/[<>]/g, (char) =>
+        char === '<' ? `${marker}L` : `${marker}G`,
+      );
+      const protectedParsed = BibTeXParser.parse(protectedRaw, {
+        ...options,
+        errorHandler: () => undefined,
+      }) as BibTeXParser.Bibliography;
+      if (
+        protectedParsed.errors.length ||
+        protectedParsed.entries.length !== parsed.entries.length
+      ) {
+        throw new Error('Failed to preserve angle brackets in BibLaTeX notes');
+      }
+      const restore = (value: string) =>
+        value.split(`${marker}L`).join('<').split(`${marker}G`).join('>');
+      parsed.entries.forEach((entry, index) => {
+        const protectedEntry = protectedParsed.entries[index];
+        if (restore(protectedEntry.key) !== entry.key) {
+          throw new Error(
+            'Failed to match BibLaTeX entries while preserving notes',
+          );
+        }
+        if (protectedEntry.fields.note) {
+          entry.fields.note = protectedEntry.fields.note.map(restore);
+        }
+      });
+    }
     libraryArray = parsed.entries;
   } else {
     throw new Error(`Unsupported bibliography format: ${databaseType}`);
@@ -245,6 +275,10 @@ function zoteroItemURI(value?: string): string {
   );
   if (native)
     return `zotero://select/${native[1].toLowerCase()}/items/${native[2]}`;
+  const local = value.match(
+    /^https?:\/\/(?:www\.)?zotero\.org\/users\/local\/[A-Z0-9]+\/items\/([A-Z0-9]{8})\/?$/i,
+  );
+  if (local) return `zotero://select/library/items/${local[1]}`;
   const match = value.match(
     /^https?:\/\/(?:www\.)?zotero\.org\/(users|groups)\/(\d+)\/items\/([A-Z0-9]{8})\/?$/i,
   );
@@ -333,8 +367,7 @@ export abstract class Entry {
    * A URI which will open the relevant entry in the Zotero client.
    */
   public get zoteroSelectURI(): string {
-    const native = this.nativeZoteroURI;
-    return native || `zotero://select/items/@${encodeURIComponent(this.id)}`;
+    return this.nativeZoteroURI || null;
   }
 
   protected get nativeZoteroURI(): string {

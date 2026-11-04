@@ -30,7 +30,7 @@ const expectedRender: Record<string, string>[] = [
       'An Overview of Biomineralization Processes and the Problem of the Vital Effect',
     URL: 'http://rimg.geoscienceworld.org/cgi/doi/10.2113/0540001',
     year: '2003',
-    zoteroSelectURI: 'zotero://select/items/@Weiner2003',
+    zoteroSelectURI: null,
   },
   {
     citekey: 'abnar2019blackbox',
@@ -48,7 +48,7 @@ const expectedRender: Record<string, string>[] = [
     titleShort: 'Blackbox meets blackbox',
     URL: 'http://arxiv.org/abs/1906.01539',
     year: '2019',
-    zoteroSelectURI: 'zotero://select/items/@abnar2019blackbox',
+    zoteroSelectURI: null,
   },
   {
     citekey: 'aitchison2017you',
@@ -62,7 +62,7 @@ const expectedRender: Record<string, string>[] = [
       'With or without you: Predictive coding and Bayesian inference in the brain',
     URL: 'http://www.sciencedirect.com/science/article/pii/S0959438817300454',
     year: '2017',
-    zoteroSelectURI: 'zotero://select/items/@aitchison2017you',
+    zoteroSelectURI: null,
   },
   {
     citekey: 'alexandrescu2006factored',
@@ -74,7 +74,7 @@ const expectedRender: Record<string, string>[] = [
     title: 'Factored Neural Language Models',
     URL: 'http://aclasb.dfki.de/nlp/bib/N06-2001',
     year: '2006',
-    zoteroSelectURI: 'zotero://select/items/@alexandrescu2006factored',
+    zoteroSelectURI: null,
     publisher: 'Association for Computational Linguistics',
   },
   {
@@ -88,7 +88,7 @@ const expectedRender: Record<string, string>[] = [
       'Perspectives on Causation: Selected Papers from the Jerusalem 2017 Workshop',
     URL: 'http://link.springer.com/10.1007/978-3-030-34308-8',
     year: '2020',
-    zoteroSelectURI: 'zotero://select/items/@bar-ashersiegal2020perspectives',
+    zoteroSelectURI: null,
     publisher: 'Springer International Publishing',
     publisherPlace: 'Cham',
   },

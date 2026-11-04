@@ -94,11 +94,11 @@ year: {{year}}
 - BibLaTeX title capitalization is preserved. Export with **Better BibLaTeX** or **Better CSL JSON**, and enable the exporter's **Keep updated** option. This plugin watches the export file; it does not read Zotero's database directly.
 - Loading a bibliography makes it searchable through the **Citations** commands. It does not import every entry as a note automatically.
 - `{{issued}}` is an ISO calendar date when a valid issue date is present. A year-only date uses January 1; a missing day uses the first day of that month. Missing or invalid dates remain empty.
-- `{{zoteroSelectURI}}` uses a native Zotero item URI when available. Citekey-based fallback links depend on Better BibTeX and the Zotero version, and may still fail with Zotero 9+ (upstream #192/#287). A citekey is not a Zotero item key.
-- Zotero PDF links require a validated attachment key and known library context. A local file path alone does not identify a group library.
+- `{{zoteroSelectURI}}` uses an explicit native Zotero URI when available. Otherwise, commands and templates resolve the exact citekey through a running Zotero with Better BibTeX on localhost. Missing or ambiguous matches produce an error instead of guessing an item key. Templates without Zotero URI variables remain offline; exporting a native URI avoids that lookup.
+- Zotero PDF links use explicit attachment identity when exported, or Better BibTeX attachment lookup when Zotero is running. Local PDF paths are opened only if they exist. Missing PDFs and failed launches produce an error.
 - Existing literature notes are reused, including moved notes. The configured path takes priority; otherwise a single matching filename anywhere in the vault is reused. Filename matching cannot distinguish an unrelated note with that name. Multiple matches produce an error. Citations does not overwrite existing note content.
 - Duplicate citation IDs produce a warning and retain the last record, matching the original plugin. If their titles or DOIs differ, earlier values are excluded from the loaded library; resolve the duplicate in your reference manager. Nonfatal BibTeX parser warnings are summarized without logging bibliography contents. Fatal parse errors preserve the previously loaded library.
-- BibTeX note angle brackets can still be changed by the parser (upstream #150); this release does not silently replace Spanish punctuation to work around it.
+- BibTeX notes preserve literal angle brackets, Spanish punctuation, and existing TeX formatting/link conversion. Input containing angle brackets uses a second parser pass, which increases bibliography loading time.
 - This is a desktop plugin. Mobile support, live citation rendering, and third-party view compatibility are not implied by the release.
 
 ## License
@@ -116,3 +116,5 @@ MIT License.
 [2]: https://retorque.re/zotero-better-bibtex/
 [3]: https://pandoc.org/MANUAL.html#extension-citations
 [4]: http://www.bibtex.org/
+
+See the [upstream issue and pull request status](docs/STATUS.md) for implementation, release, and verification details.

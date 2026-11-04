@@ -1,4 +1,6 @@
-# Upstream issue triage
+# Upstream issue triage — 0.5.0 snapshot
+
+For current resolution and release status, see [the separate status matrix](STATUS.md). The findings below preserve the original 0.5.0 audit; #150, #192 and #287 were subsequently addressed for 0.5.1.
 
 Audited all 160 non-PR issue records from `issues.json`; 4 issue bodies are empty. Coverage labels reflect current source and tests, with input-dependent or unverified cases called out; this read-only pass did not execute tests.
 

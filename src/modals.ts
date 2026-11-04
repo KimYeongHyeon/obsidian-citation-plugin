@@ -8,8 +8,11 @@ import {
   SearchMatches,
   SearchMatchPart,
 } from 'obsidian';
-import { pathToFileURL } from 'url';
 import * as path from 'path';
+import { existsSync } from 'fs';
+// Electron is provided by the Obsidian desktop runtime.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { shell } = require('electron');
 import CitationPlugin from './main';
 import { Entry } from './types';
 
@@ -256,17 +259,31 @@ export class OpenNoteModal extends SearchModal {
       if (evt.shiftKey) {
         const files = item.files || [];
         const pdfPath = files.find(
-          (file) => path.isAbsolute(file) && /\.pdf$/i.test(file),
+          (file) =>
+            path.isAbsolute(file) && /\.pdf$/i.test(file) && existsSync(file),
         );
         if (item.zoteroPdfURI) {
-          open(item.zoteroPdfURI);
-        } else if (!pdfPath) {
-          new Notice('This reference has no associated PDF files.');
+          shell
+            .openExternal(item.zoteroPdfURI)
+            .catch((error: unknown) => this.reportError(error));
+        } else if (pdfPath) {
+          shell
+            .openPath(pdfPath)
+            .then((error: string) => {
+              if (error) this.reportError(new Error(error));
+            })
+            .catch((error: unknown) => this.reportError(error));
         } else {
-          open(pathToFileURL(pdfPath).href);
+          this.plugin
+            .getPdfZoteroLinkForCitekey(item.id)
+            .then((link) => shell.openExternal(link))
+            .catch((error: unknown) => this.reportError(error));
         }
       } else {
-        open(item.zoteroSelectURI);
+        this.plugin
+          .getEntryZoteroLinkForCitekey(item.id)
+          .then((link) => shell.openExternal(link))
+          .catch((error: unknown) => this.reportError(error));
       }
     }
   }

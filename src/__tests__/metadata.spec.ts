@@ -37,7 +37,7 @@ test('exports entry type, metadata, and inherited getters', () => {
   });
   expect(vars.entry).toMatchObject({
     year: 2024,
-    zoteroSelectURI: 'zotero://select/items/@key',
+    zoteroSelectURI: null,
   });
 });
 
@@ -69,13 +69,13 @@ test('rejects invalid formats, malformed CSL, and missing keys', () => {
   expect(() => loadEntries('', 'unknown' as any)).toThrow(/Unsupported/);
 });
 
-test('extracts only valid storage PDF keys and encodes citekeys', () => {
+test('extracts only valid storage PDF keys without guessing citekey URIs', () => {
   const entry = bib(
     String.raw`@book{a/b, file={/Users/me/Zotero/storage/ABCDEFGH/paper.pdf}}`,
   );
   expect(entry.zoteroPdfHash).toBe('ABCDEFGH');
   expect(entry.zoteroPdfURI).toBeNull();
-  expect(entry.zoteroSelectURI).toBe('zotero://select/items/@a%2Fb');
+  expect(entry.zoteroSelectURI).toBeNull();
   expect(
     bib(String.raw`@book{x, file={/tmp/storage/no/paper.pdf}}`).zoteroPdfHash,
   ).toBeNull();
@@ -98,7 +98,7 @@ test('keeps both links in the issue 171 annotation and respects Zotero group URI
   );
   expect(
     new EntryCSLAdapter({ id: '2CURNAU9', type: 'book' }).zoteroSelectURI,
-  ).toBe('zotero://select/items/@2CURNAU9');
+  ).toBeNull();
 });
 
 test('normalizes Mendeley and JabRef file paths without damaging absolute paths', () => {
@@ -130,7 +130,7 @@ test('does not guess a native item key from an eight-character citekey', () => {
   const plain = bib(
     '@book{ABCDEFGH, file={/Users/me/Zotero/storage/QWERTY12/paper.pdf}}',
   );
-  expect(plain.zoteroSelectURI).toBe('zotero://select/items/@ABCDEFGH');
+  expect(plain.zoteroSelectURI).toBeNull();
   expect(plain.zoteroPdfURI).toBeNull();
   const explicit = bib(
     '@book{ABCDEFGH, zotero={zotero://select/groups/123/items/ZXCVBN12}, file={/Users/me/Zotero/storage/QWERTY12/paper.pdf}}',
@@ -206,4 +206,13 @@ test('preserves duplicate records with a warning and library lookup retains the 
   } finally {
     warn.mockRestore();
   }
+});
+
+test('uses explicit local Zotero user URI', () => {
+  const entry = new EntryCSLAdapter({
+    id: 'key',
+    type: 'book',
+    uri: 'http://zotero.org/users/local/ABCD1234/items/ZXCVBN12',
+  });
+  expect(entry.zoteroSelectURI).toBe('zotero://select/library/items/ZXCVBN12');
 });

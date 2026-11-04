@@ -14,6 +14,8 @@ import {
 } from 'handlebars';
 
 import CitationEvents from './events';
+import { resolveZoteroLink } from './zotero';
+import { renderZoteroTemplate } from './template-zotero';
 import {
   InsertCitationModal,
   InsertNoteLinkModal,
@@ -331,33 +333,51 @@ export default class CitationPlugin extends Plugin {
     );
   }
 
-  getTitleForCitekey(citekey: string, library = this.library): string {
-    const unsafeTitle = this.literatureNoteTitleTemplate(
+  async getTitleForCitekey(
+    citekey: string,
+    library = this.library,
+  ): Promise<string> {
+    const unsafeTitle = await renderZoteroTemplate(
+      this.settings.literatureNoteTitleTemplate,
+      this.literatureNoteTitleTemplate,
       library.getTemplateVariablesForCitekey(citekey),
     );
     return unsafeTitle.replace(DISALLOWED_FILENAME_CHARACTERS_RE, '_');
   }
 
-  getPathForCitekey(citekey: string, library = this.library): string {
-    const title = this.getTitleForCitekey(citekey, library);
-    // TODO escape note title
+  async getPathForCitekey(
+    citekey: string,
+    library = this.library,
+  ): Promise<string> {
+    const title = await this.getTitleForCitekey(citekey, library);
     return path.join(this.settings.literatureNoteFolder, `${title}.md`);
   }
 
-  getInitialContentForCitekey(citekey: string, library = this.library): string {
-    return this.literatureNoteContentTemplate(
+  async getInitialContentForCitekey(
+    citekey: string,
+    library = this.library,
+  ): Promise<string> {
+    return renderZoteroTemplate(
+      this.settings.literatureNoteContentTemplate,
+      this.literatureNoteContentTemplate,
       library.getTemplateVariablesForCitekey(citekey),
     );
   }
 
-  getMarkdownCitationForCitekey(citekey: string): string {
-    return this.markdownCitationTemplate(
+  async getMarkdownCitationForCitekey(citekey: string): Promise<string> {
+    return renderZoteroTemplate(
+      this.settings.markdownCitationTemplate,
+      this.markdownCitationTemplate,
       this.library.getTemplateVariablesForCitekey(citekey),
     );
   }
 
-  getAlternativeMarkdownCitationForCitekey(citekey: string): string {
-    return this.alternativeMarkdownCitationTemplate(
+  async getAlternativeMarkdownCitationForCitekey(
+    citekey: string,
+  ): Promise<string> {
+    return renderZoteroTemplate(
+      this.settings.alternativeMarkdownCitationTemplate,
+      this.alternativeMarkdownCitationTemplate,
       this.library.getTemplateVariablesForCitekey(citekey),
     );
   }
@@ -381,7 +401,7 @@ export default class CitationPlugin extends Plugin {
           'Literature note folder must be a path inside the vault.',
         );
       }
-      const title = this.getTitleForCitekey(citekey, library);
+      const title = await this.getTitleForCitekey(citekey, library);
       if (!title || title === '.' || title === '..')
         throw new Error('Literature note title is empty or invalid.');
       const target = normalizePath(path.posix.join(folder, `${title}.md`));
@@ -409,7 +429,7 @@ export default class CitationPlugin extends Plugin {
       }
       return await this.app.vault.create(
         target,
-        this.getInitialContentForCitekey(citekey, library),
+        await this.getInitialContentForCitekey(citekey, library),
       );
     } catch (error) {
       this.literatureNoteErrorNotifier.show(error.message);
@@ -451,7 +471,7 @@ export default class CitationPlugin extends Plugin {
       new Notice('No active editor. Open a note or canvas text editor first.');
       return;
     }
-    editor.replaceSelection(this.getInitialContentForCitekey(citekey));
+    editor.replaceSelection(await this.getInitialContentForCitekey(citekey));
   }
 
   async insertMarkdownCitation(
@@ -464,17 +484,23 @@ export default class CitationPlugin extends Plugin {
       return;
     }
     const citation = alternative
-      ? this.getAlternativeMarkdownCitationForCitekey(citekey)
-      : this.getMarkdownCitationForCitekey(citekey);
+      ? await this.getAlternativeMarkdownCitationForCitekey(citekey)
+      : await this.getMarkdownCitationForCitekey(citekey);
     editor.replaceSelection(citation);
   }
 
-  getEntryZoteroLinkForCitekey(citekey: string): string {
-    return this.library.entries[citekey].zoteroSelectURI;
+  async getEntryZoteroLinkForCitekey(citekey: string): Promise<string> {
+    return (
+      this.library.entries[citekey].zoteroSelectURI ||
+      resolveZoteroLink(citekey)
+    );
   }
 
-  getPdfZoteroLinkForCitekey(citekey: string): string {
-    return this.library.entries[citekey].zoteroPdfURI;
+  async getPdfZoteroLinkForCitekey(citekey: string): Promise<string> {
+    return (
+      this.library.entries[citekey].zoteroPdfURI ||
+      resolveZoteroLink(citekey, true)
+    );
   }
 
   async insertZoteroLink(
@@ -487,8 +513,8 @@ export default class CitationPlugin extends Plugin {
       return;
     }
     const link = pdf
-      ? this.getPdfZoteroLinkForCitekey(citekey)
-      : this.getEntryZoteroLinkForCitekey(citekey);
+      ? await this.getPdfZoteroLinkForCitekey(citekey)
+      : await this.getEntryZoteroLinkForCitekey(citekey);
     if (!link) {
       new Notice('This reference has no Zotero link.');
       return;

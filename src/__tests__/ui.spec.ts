@@ -1,3 +1,4 @@
+jest.mock('electron', () => ({ shell: {} }), { virtual: true });
 jest.mock(
   'obsidian',
   () => {
