@@ -2,16 +2,11 @@
 
 This is an independent maintenance fork of [Jon Gauthier's Citations plugin](https://github.com/hans/obsidian-citation-plugin), retaining its MIT license and plugin ID. It is not an official upstream release.
 
-## Install and update this fork
+## Release withdrawn — do not install yet
 
-1. Install and enable [BRAT](https://github.com/TfTHacker/obsidian42-brat) in Obsidian.
-2. In BRAT, choose **Add a beta plugin**, enter `KimYeongHyeon/obsidian-citation-plugin`, and select the latest release.
-3. Enable **Citations** in Community plugins. If Citations is already installed, BRAT replaces its program files and preserves its settings and notes.
-4. Keep BRAT's startup update check enabled, or use BRAT's update command to receive this fork's releases.
+Version 0.5.0 and its release assets were removed after independent review reproduced regressions. The 0.5.1 source is a development candidate and is not approved for release. Do not install it through BRAT while the fixes are under review. Existing installations should not treat the version number as a stability guarantee.
 
-Use BRAT to manage this fork. Reinstalling Citations from the community plugin catalog installs the original upstream build instead.
-
-Source, issue reports, and releases: [KimYeongHyeon/obsidian-citation-plugin](https://github.com/KimYeongHyeon/obsidian-citation-plugin). See [the maintenance record](docs/MAINTENANCE.md) for the upstream PR review, issue triage, verification, and limits.
+See the separate [resolution and release status matrix](docs/STATUS.md) and [maintenance record](docs/MAINTENANCE.md). Source tags are retained as review evidence; they do not indicate an available or recommended release.
 
 ## Original plugin
 

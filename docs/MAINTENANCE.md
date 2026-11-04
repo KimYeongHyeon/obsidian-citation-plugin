@@ -1,4 +1,6 @@
-# Maintenance record — 0.5.1
+> **Withdrawal:** 0.5.0 was removed from GitHub Releases after independent review reproduced baseline regressions. 0.5.1 is not released. The verification records below describe individual checks, not release approval. The current blockers are tracked in [STATUS.md](STATUS.md).
+
+# Maintenance record — unreleased candidate
 
 The [status matrix](STATUS.md) separately records resolution, code inclusion, release version, and evidence for all 160 issues and 15 PRs. It preserves requests and unverified reports rather than counting them as fixed.
 
