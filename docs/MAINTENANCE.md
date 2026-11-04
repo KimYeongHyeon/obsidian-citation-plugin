@@ -1,6 +1,6 @@
-> **Withdrawal:** 0.5.0 was removed from GitHub Releases after independent review reproduced baseline regressions. 0.5.1 is not released. The verification records below describe individual checks, not release approval. The current blockers are tracked in [STATUS.md](STATUS.md).
+> **Release status:** [0.5.1 is published](https://github.com/KimYeongHyeon/obsidian-citation-plugin/releases/tag/0.5.1). Version 0.5.0 and its release assets remain withdrawn after independent review reproduced baseline regressions. Historical verification records do not imply that every upstream report is resolved. See [STATUS.md](STATUS.md).
 
-# Maintenance record — unreleased candidate
+# Maintenance record — 0.5.1
 
 The [status matrix](STATUS.md) separately records resolution, code inclusion, release version, and evidence for all 160 issues and 15 PRs. It preserves requests and unverified reports rather than counting them as fixed.
 
@@ -22,7 +22,13 @@ The [status matrix](STATUS.md) separately records resolution, code inclusion, re
 - Actual Citations search → Shift+Tab changed the Zotero reader from a different paper to the requested Reference-Free Human-Object Interaction Editing PDF. The rendered title, authors, and 35-page viewer were observed. Tab selected the correct item; its Citation Key field matched the input.
 - Original bibliography remains 990 parsed records / 989 library entries. The two-pass parser test took 5.722 seconds in a separate Node check; this is not an app startup benchmark. Parser warnings were aggregated once.
 - `npm test -- --runInBand`: 11 suites / 83 tests passed. Type checking, production build, native-class gate, and ESLint (zero errors) passed. Actual-app checks additionally passed empty-library replacement, malformed-input preservation, guarded templates, selection-change cancellation, same-editor/different-file cancellation, configured-path matching, and exact content preservation on case-variant lookup. Timestamp frontmatter added by another installed plugin was compared as part of the preserved content rather than mistaken for a Citations overwrite. Temporary test data was trashed, settings restored, and the original 989-entry library and note were restored.
-- Actual-server identity checks passed normal resolution and rejection of foreign numeric-user/local-profile exports. Independent review found no remaining reproduced blocker in its scope. Final release asset and BRAT restart verification are recorded after completion.
+- Actual-server identity checks passed normal resolution and rejection of foreign numeric-user/local-profile exports. Independent review found no remaining reproduced blocker in its scope. Distribution verification is recorded below.
+
+## 0.5.1 distribution verification
+
+- Published tag `0.5.1` points to `46e40dfeee76575e2b851a7dc03cee1a373b4e91`. Build/test CI and release workflow passed. The release contains exactly `main.js`, `manifest.json`, and `styles.css`; all three GitHub asset digests matched the locally tested build before publication.
+- BRAT installed the public release successfully and registered this repository at `latest`. Installed JavaScript and CSS match the release byte for byte; installed manifest fields match the release manifest. The existing settings file is unchanged.
+- After a full Obsidian restart, Citations 0.5.1 remained enabled with 989 references and loading complete. BRAT retained its registration and startup updates. Other registered repositories were preserved.
 
 The real PDF check covered Zotero's reader on macOS. Windows/Linux, arbitrary external PDF applications, mobile, and the declared minimum Obsidian version were not exercised. Citekey lookup requires a running Zotero with Better BibTeX; ordinary bibliography search does not.
 

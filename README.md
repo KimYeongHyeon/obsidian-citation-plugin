@@ -2,11 +2,11 @@
 
 This is an independent maintenance fork of [Jon Gauthier's Citations plugin](https://github.com/hans/obsidian-citation-plugin), retaining its MIT license and plugin ID. It is not an official upstream release.
 
-## Release withdrawn — do not install yet
+## Install the maintained fork
 
-Version 0.5.0 and its release assets were removed after independent review reproduced regressions. The 0.5.1 source is a development candidate and is not approved for release. Do not install it through BRAT while the fixes are under review. Existing installations should not treat the version number as a stability guarantee.
+[Version 0.5.1](https://github.com/KimYeongHyeon/obsidian-citation-plugin/releases/tag/0.5.1) is available. In Obsidian, install and enable **BRAT**, run **BRAT: Add a beta plugin for testing**, and enter `KimYeongHyeon/obsidian-citation-plugin`. Enable **Citations** under Community plugins. Back up your vault before switching plugin builds; this fork retains the original plugin ID and settings.
 
-See the separate [resolution and release status matrix](docs/STATUS.md) and [maintenance record](docs/MAINTENANCE.md). Source tags are retained as review evidence; they do not indicate an available or recommended release.
+Version 0.5.0 was withdrawn after independent review reproduced regressions. Its release assets remain removed; its source tag is historical evidence. Version 0.5.1 fixes the reproduced regressions and passed independent review, 83 automated tests, and actual-app checks. See the separate [resolution and release status matrix](docs/STATUS.md) and [maintenance record](docs/MAINTENANCE.md) for scope and limits.
 
 ## Original plugin
 
@@ -91,7 +91,7 @@ year: {{year}}
 - `{{issued}}` is an ISO calendar date when a valid issue date is present. A year-only date uses January 1; a missing day uses the first day of that month. Missing or invalid dates remain empty.
 - `{{zoteroSelectURI}}` uses an explicit native Zotero URI when available. Otherwise, commands and templates resolve the exact citekey through a running Zotero with Better BibTeX on localhost. Missing or ambiguous matches produce an error instead of guessing an item key. Templates without Zotero URI variables remain offline; exporting a native URI avoids that lookup.
 - Zotero PDF links use explicit attachment identity when exported, or Better BibTeX attachment lookup when Zotero is running. Local PDF paths are opened only if they exist. Missing PDFs and failed launches produce an error.
-- Existing literature notes are reused, including moved notes. The configured path takes priority; otherwise a single matching filename anywhere in the vault is reused. Filename matching cannot distinguish an unrelated note with that name. Multiple matches produce an error. Citations does not overwrite existing note content.
+- Existing literature notes are reused at the configured full path, including case variants. Notes moved elsewhere are not discovered by filename alone, because that can select unrelated content. Citations does not overwrite existing note content.
 - Duplicate citation IDs produce a warning and retain the last record, matching the original plugin. If their titles or DOIs differ, earlier values are excluded from the loaded library; resolve the duplicate in your reference manager. Nonfatal BibTeX parser warnings are summarized without logging bibliography contents. Fatal parse errors preserve the previously loaded library.
 - BibTeX notes preserve literal angle brackets, Spanish punctuation, and existing TeX formatting/link conversion. Input containing angle brackets uses a second parser pass, which increases bibliography loading time.
 - This is a desktop plugin. Mobile support, live citation rendering, and third-party view compatibility are not implied by the release.
