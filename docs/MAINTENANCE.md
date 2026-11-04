@@ -53,4 +53,9 @@ Known limits include filename-based moved-note identity, duplicate-ID last-recor
 
 ## Distribution verification
 
-Release publication and BRAT installation verification are recorded after their completion.
+- [Public release 0.5.0](https://github.com/KimYeongHyeon/obsidian-citation-plugin/releases/tag/0.5.0), source tag `b0a40a5`.
+- [Build and test](https://github.com/KimYeongHyeon/obsidian-citation-plugin/actions/runs/41811183361) passed. [Release workflow](https://github.com/KimYeongHyeon/obsidian-citation-plugin/actions/runs/41811201703) passed on attempt 2. Attempt 1 failed only at the GitHub upload endpoint with HTTP 404; its temporary draft was removed automatically. The unchanged workflow succeeded on retry.
+- All three GitHub release asset digests match the locally tested production build.
+- BRAT latest-release registration and installation succeeded. Installed `main.js` and `styles.css` match the release bytes; BRAT reserialized `manifest.json`, whose parsed fields are identical. Existing `data.json` is byte-identical to the backup.
+- After BRAT installation and a full app restart, Citations remained enabled at 0.5.0 with 989 entries. BRAT retained the fork registration and startup update checks.
+- One fork announcement was posted in the [upstream maintenance discussion](https://github.com/hans/obsidian-citation-plugin/issues/266#issuecomment-6628016059).
