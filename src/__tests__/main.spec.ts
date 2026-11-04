@@ -30,6 +30,7 @@ jest.mock('../settings', () => ({}));
 import CitationPlugin from '../main';
 import { TFile, Notice, FileSystemAdapter } from 'obsidian';
 import { Library } from '../types';
+import * as zotero from '../zotero';
 import { TextDecoder } from 'util';
 (global as any).TextDecoder = TextDecoder;
 
@@ -77,10 +78,28 @@ describe('citation runtime', () => {
     } as any;
   });
 
-  test('creates nested folders and reuses an existing moved note', async () => {
-    const moved = new (TFile as any)('moved/key.md', 'key.md');
-    files.push(moved);
-    expect(await plugin.getOrCreateLiteratureNoteFile('key')).toBe(moved);
+  test('creates the configured note instead of reusing an unrelated basename', async () => {
+    plugin.settings.literatureNoteFolder = 'Reading notes';
+    jest.spyOn(plugin, 'getTitleForCitekey').mockResolvedValue('Smith');
+    files.push(new (TFile as any)('Unrelated/Smith.md', 'Smith.md'));
+    const result = await plugin.getOrCreateLiteratureNoteFile('key');
+    expect(result.path).toBe('Reading notes/Smith.md');
+    expect(create).toHaveBeenCalledWith('Reading notes/Smith.md', 'content');
+  });
+
+  test('reuses a case-insensitive match at the configured path without overwriting it', async () => {
+    plugin.settings.literatureNoteFolder = 'Reading notes';
+    jest.spyOn(plugin, 'getTitleForCitekey').mockResolvedValue('Smith');
+    const existing = new (TFile as any)('Reading notes/SMITH.md', 'SMITH.md');
+    files.push(existing, new (TFile as any)('Unrelated/Smith.md', 'Smith.md'));
+    expect(await plugin.getOrCreateLiteratureNoteFile('key')).toBe(existing);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  test('creates nested folders and reuses the configured note', async () => {
+    const existing = new (TFile as any)('notes/nested/key.md', 'key.md');
+    files.push(existing);
+    expect(await plugin.getOrCreateLiteratureNoteFile('key')).toBe(existing);
     expect(create).not.toHaveBeenCalled();
     files.length = 0;
     await plugin.getOrCreateLiteratureNoteFile('key');
@@ -91,14 +110,7 @@ describe('citation runtime', () => {
     expect(create).toHaveBeenCalledWith('notes/nested/key.md', 'content');
   });
 
-  test('rejects ambiguous filenames and paths outside the vault', async () => {
-    files.push(
-      new (TFile as any)('a/key.md', 'key.md'),
-      new (TFile as any)('b/key.md', 'key.md'),
-    );
-    await expect(plugin.getOrCreateLiteratureNoteFile('key')).rejects.toThrow(
-      'Multiple',
-    );
+  test('rejects paths outside the vault', async () => {
     plugin.settings.literatureNoteFolder = '../outside';
     await expect(plugin.getOrCreateLiteratureNoteFile('key')).rejects.toThrow(
       'inside the vault',
@@ -106,9 +118,15 @@ describe('citation runtime', () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  test('inserts into the captured editor using Obsidian-generated moved-file link', async () => {
-    files.push(new (TFile as any)('moved/key.md', 'key.md'));
-    const editor = { replaceSelection: jest.fn() };
+  test('inserts into the captured editor using an Obsidian-generated link', async () => {
+    files.push(new (TFile as any)('notes/nested/key.md', 'key.md'));
+    const editor = {
+      replaceSelection: jest.fn(),
+      getValue: () => 'text',
+      listSelections: () => [
+        { anchor: { line: 0, ch: 0 }, head: { line: 0, ch: 0 } },
+      ],
+    };
     await plugin.insertLiteratureNoteLink('key', editor);
     expect(plugin.app.fileManager.generateMarkdownLink).toHaveBeenCalledWith(
       files[0],
@@ -121,6 +139,19 @@ describe('citation runtime', () => {
     expect(editor.replaceSelection).toHaveBeenLastCalledWith('key');
     await plugin.insertMarkdownCitation('key', false, null);
     expect(Notice).toHaveBeenCalled();
+  });
+
+  test('passes source identity to item and PDF lookup', async () => {
+    const uri = 'https://www.zotero.org/users/1/items/ABCDEFGH';
+    plugin.library.entries.key = { zoteroSourceURI: uri } as any;
+    const resolve = jest
+      .spyOn(zotero, 'resolveZoteroLink')
+      .mockResolvedValue('link');
+    await plugin.getEntryZoteroLinkForCitekey('key');
+    await plugin.getPdfZoteroLinkForCitekey('key');
+    expect(resolve).toHaveBeenNthCalledWith(1, 'key', false, uri);
+    expect(resolve).toHaveBeenNthCalledWith(2, 'key', true, uri);
+    resolve.mockRestore();
   });
 
   test('read failures and missing paths complete loading without losing the library', async () => {
@@ -247,7 +278,13 @@ describe('citation runtime', () => {
         finish = resolve;
       }),
     );
-    const editor = { replaceSelection: jest.fn() };
+    const editor = {
+      replaceSelection: jest.fn(),
+      getValue: () => 'text',
+      listSelections: () => [
+        { anchor: { line: 0, ch: 0 }, head: { line: 0, ch: 0 } },
+      ],
+    };
     const insertion = plugin.insertLiteratureNoteLink('key', editor);
     (plugin.app.workspace as any).activeEditor.file.path = 'other.md';
     const file = new (TFile as any)('moved/key.md', 'key.md');
@@ -261,20 +298,26 @@ describe('citation runtime', () => {
     );
   });
 
-  test('editor lookup safely falls back to a compatible active view', () => {
+  test('editor lookup rejects incomplete editors and falls back to a compatible view', async () => {
     const workspace = plugin.app.workspace as any;
-    const fallback = { replaceSelection: jest.fn() };
-    workspace.activeEditor = null;
+    const incomplete = { replaceSelection: jest.fn() };
+    const fallback = {
+      replaceSelection: jest.fn(),
+      getValue: () => '',
+      listSelections: () => [
+        { anchor: { line: 0, ch: 0 }, head: { line: 0, ch: 0 } },
+      ],
+    };
+    workspace.activeEditor = { editor: incomplete };
     workspace.activeLeaf = { view: { editor: fallback } };
     expect(plugin.editor).toBe(fallback);
-    const active = { replaceSelection: jest.fn() };
-    workspace.activeEditor = { editor: active };
-    expect(plugin.editor).toBe(active);
-    workspace.activeEditor = { editor: {} };
-    workspace.activeLeaf.view.editor = {};
+    workspace.activeLeaf.view.editor = incomplete;
     expect(plugin.editor).toBeNull();
-    workspace.activeLeaf = null;
-    expect(plugin.editor).toBeNull();
+    await plugin.insertMarkdownCitation('key');
+    expect(Notice).toHaveBeenCalledWith(expect.stringContaining('editor'));
+    expect(incomplete.replaceSelection).not.toHaveBeenCalled();
+    await plugin.insertMarkdownCitation('key', false, incomplete as any);
+    expect(incomplete.replaceSelection).not.toHaveBeenCalled();
   });
 
   test('clipboard rejects two CSL records with the same citation key', async () => {

@@ -105,3 +105,122 @@ test('resolves an unsynced local user item URI', async () => {
     'zotero://select/library/items/ZXCVBN12',
   );
 });
+
+test('checks the exported item identity against the exact RPC match', async () => {
+  const item = {
+    citekey: 'ABCDEFGH',
+    id: 'http://zotero.org/users/1/items/ZXCVBN12',
+  };
+  request.mockResolvedValueOnce(response([item]));
+  await expect(
+    resolveZoteroLink(
+      'ABCDEFGH',
+      false,
+      'https://www.zotero.org/users/2/items/ZXCVBN12/',
+    ),
+  ).rejects.toThrow('identity');
+  request.mockResolvedValueOnce(response([item]));
+  await expect(
+    resolveZoteroLink(
+      'ABCDEFGH',
+      false,
+      'https://www.zotero.org/users/1/items/ZXCVBN12/',
+    ),
+  ).resolves.toBe('zotero://select/library/items/ZXCVBN12');
+  request.mockResolvedValueOnce(response([item]));
+  await expect(
+    resolveZoteroLink(
+      'ABCDEFGH',
+      false,
+      'http://zotero.org/users/1/items/ABCDEFGH',
+    ),
+  ).rejects.toThrow('identity');
+});
+
+test('accepts matching local and group identities and rejects group mismatches', async () => {
+  for (const id of [
+    'http://zotero.org/users/local/ABCD1234/items/ZXCVBN12',
+    'http://zotero.org/groups/123/items/ZXCVBN12',
+  ]) {
+    request.mockResolvedValueOnce(response([{ citekey: 'key', id }]));
+    await expect(resolveZoteroLink('key', false, id)).resolves.toMatch(
+      /^zotero:\/\/select\//,
+    );
+  }
+  request.mockResolvedValueOnce(
+    response([
+      { citekey: 'key', id: 'http://zotero.org/groups/123/items/ZXCVBN12' },
+    ]),
+  );
+  await expect(
+    resolveZoteroLink(
+      'key',
+      false,
+      'http://zotero.org/groups/124/items/ZXCVBN12',
+    ),
+  ).rejects.toThrow('identity');
+});
+
+test('rejects PDF attachments outside the matched item scope', async () => {
+  request
+    .mockResolvedValueOnce(
+      response([
+        { citekey: 'key', id: 'http://zotero.org/groups/123/items/ZXCVBN12' },
+      ]),
+    )
+    .mockResolvedValueOnce(
+      response([
+        {
+          path: '/tmp/paper.pdf',
+          open: 'zotero://open-pdf/groups/124/items/QWERTY12',
+        },
+      ]),
+    );
+  await expect(resolveZoteroLink('key', true)).rejects.toThrow(
+    'No PDF attachment',
+  );
+});
+
+test('treats a null source URI as absent but rejects an invalid string', async () => {
+  const item = {
+    citekey: 'key',
+    id: 'http://zotero.org/users/1/items/ZXCVBN12',
+  };
+  request.mockResolvedValueOnce(response([item]));
+  await expect(resolveZoteroLink('key', false, null)).resolves.toBe(
+    'zotero://select/library/items/ZXCVBN12',
+  );
+  request.mockResolvedValueOnce(response([item]));
+  await expect(resolveZoteroLink('key', false, '')).rejects.toThrow('identity');
+});
+
+test('rejects a different local profile or numeric user for a local source', async () => {
+  request.mockResolvedValueOnce(
+    response([
+      {
+        citekey: 'key',
+        id: 'http://zotero.org/users/local/CURRENT1/items/ZXCVBN12',
+      },
+    ]),
+  );
+  await expect(
+    resolveZoteroLink(
+      'key',
+      false,
+      'http://zotero.org/users/local/FOREIGN1/items/ZXCVBN12',
+    ),
+  ).rejects.toThrow('identity');
+
+  request.mockResolvedValueOnce(
+    response([
+      { citekey: 'key', id: 'http://zotero.org/users/1/items/ZXCVBN12' },
+    ]),
+  );
+  await expect(
+    resolveZoteroLink(
+      'key',
+      false,
+      'http://zotero.org/users/local/CURRENT1/items/ZXCVBN12',
+    ),
+  ).rejects.toThrow('identity');
+});

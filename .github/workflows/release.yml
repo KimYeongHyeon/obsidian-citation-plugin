@@ -23,7 +23,9 @@ jobs:
       - run: npm test -- --runInBand
       - name: Verify tag matches manifest version
         run: test "$GITHUB_REF_NAME" = "$(node -p "require('./manifest.json').version")"
-      - name: Publish release
-        run: gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css --verify-tag --generate-notes
+      - name: Verify release assets
+        run: test -s main.js && test -s manifest.json && test -s styles.css
+      - name: Create draft release
+        run: gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css --verify-tag --generate-notes --draft
         env:
           GH_TOKEN: ${{ github.token }}

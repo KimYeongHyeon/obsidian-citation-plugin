@@ -63,7 +63,7 @@ test('handles CSL names, keywords, editors, and invalid dates', () => {
 });
 
 test('rejects invalid formats, malformed CSL, and missing keys', () => {
-  for (const raw of ['', '{}', '[]', '[null]', '[{"id":"x"}]']) {
+  for (const raw of ['', '{}', '[null]', '[{"id":"x"}]']) {
     expect(() => loadEntries(raw, 'csl-json')).toThrow();
   }
   expect(() => loadEntries('', 'unknown' as any)).toThrow(/Unsupported/);
@@ -214,5 +214,84 @@ test('uses explicit local Zotero user URI', () => {
     type: 'book',
     uri: 'http://zotero.org/users/local/ABCD1234/items/ZXCVBN12',
   });
-  expect(entry.zoteroSelectURI).toBe('zotero://select/library/items/ZXCVBN12');
+  expect(entry.zoteroSourceURI).toBe(
+    'http://zotero.org/users/local/ABCD1234/items/ZXCVBN12',
+  );
+  expect(entry.zoteroSelectURI).toBeNull();
+});
+
+test('preserves explicit HTTP item identity without assuming a numeric user is current', () => {
+  const uri = 'https://zotero.org/users/123/items/ABCDEFGH';
+  const entry = new EntryCSLAdapter({ id: 'key', type: 'book', uri });
+  expect(entry.zoteroSourceURI).toBe(uri);
+  expect(entry.toJSON().zoteroSourceURI).toBe(uri);
+  expect(entry.zoteroSelectURI).toBeNull();
+  expect(entry.zoteroPdfURI).toBeNull();
+  const byId = new EntryCSLAdapter({ id: uri, type: 'book' });
+  expect(byId.zoteroSourceURI).toBe(uri);
+  expect(byId.zoteroSelectURI).toBeNull();
+  const conflicting = new EntryCSLAdapter({
+    id: 'zotero://select/library/items/ZXCVBN12',
+    type: 'book',
+    uri,
+  });
+  expect(conflicting.zoteroSourceURI).toBe(uri);
+  expect(conflicting.zoteroSelectURI).toBeNull();
+});
+
+test('selects one explicit Bib identity and never infers it from a citekey', () => {
+  const uri = 'https://zotero.org/users/123/items/ABCDEFGH';
+  const entry = bib(
+    `@book{key, zotero={${uri}}, uri={https://zotero.org/groups/7/items/ZXCVBN12}, file={/Users/me/Zotero/storage/QWERTY12/paper.pdf}}`,
+  );
+  expect(entry.zoteroSourceURI).toBe(uri);
+  expect(entry.zoteroSelectURI).toBeNull();
+  expect(entry.zoteroPdfURI).toBeNull();
+  expect(bib(`@book{key, id={${uri}}}`).zoteroSourceURI).toBe(uri);
+  expect(bib('@book{ABCDEFGH, title={Test}}').zoteroSourceURI).toBeNull();
+  expect(
+    bib('@book{key, uri={https://example.com/users/123/items/ABCDEFGH}}')
+      .zoteroSourceURI,
+  ).toBeNull();
+});
+
+test('keeps group and local HTTP sources with safe native links', () => {
+  for (const [uri, native] of [
+    [
+      'https://zotero.org/groups/123/items/ABCDEFGH',
+      'zotero://select/groups/123/items/ABCDEFGH',
+    ],
+    ['http://zotero.org/users/local/ABCD1234/items/ZXCVBN12', null],
+  ]) {
+    const entry = new EntryCSLAdapter({ id: 'key', type: 'book', uri });
+    expect(entry.zoteroSourceURI).toBe(uri);
+    expect(entry.zoteroSelectURI).toBe(native);
+  }
+});
+
+test('prefers an explicit HTTP identity over an earlier conflicting native URI', () => {
+  const uri = 'https://zotero.org/users/123/items/ABCDEFGH';
+  const csl = new EntryCSLAdapter({
+    id: uri,
+    type: 'book',
+    uri: 'zotero://select/library/items/ZXCVBN12',
+  });
+  const bibEntry = bib(
+    `@book{key, zotero={zotero://select/groups/7/items/ZXCVBN12}, uri={${uri}}}`,
+  );
+  for (const entry of [csl, bibEntry]) {
+    expect(entry.zoteroSourceURI).toBe(uri);
+    expect(entry.zoteroSelectURI).toBeNull();
+    expect(entry.zoteroPdfURI).toBeNull();
+  }
+});
+
+test('does not map a foreign local profile to the current library or its PDF', () => {
+  const uri = 'https://zotero.org/users/local/FOREIGN1/items/ABCDEFGH';
+  const entry = bib(
+    `@book{key, uri={${uri}}, file={/Users/me/Zotero/storage/QWERTY12/paper.pdf}}`,
+  );
+  expect(entry.zoteroSourceURI).toBe(uri);
+  expect(entry.zoteroSelectURI).toBeNull();
+  expect(entry.zoteroPdfURI).toBeNull();
 });

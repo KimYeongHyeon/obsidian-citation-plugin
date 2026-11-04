@@ -42,6 +42,48 @@ import LoadWorker from 'web-worker:./worker';
 
 export interface CitationEditor {
   replaceSelection(text: string): void;
+  getValue(): string;
+  listSelections(): {
+    anchor: { line: number; ch: number };
+    head: { line: number; ch: number };
+  }[];
+}
+
+function isCitationEditor(editor: CitationEditor): boolean {
+  return (
+    typeof editor?.replaceSelection === 'function' &&
+    typeof editor?.getValue === 'function' &&
+    typeof editor?.listSelections === 'function'
+  );
+}
+
+function captureEditor(editor: CitationEditor, workspace: any): () => boolean {
+  const owner =
+    workspace.activeEditor?.editor === editor
+      ? workspace.activeEditor
+      : workspace.activeLeaf?.view?.editor === editor
+      ? workspace.activeLeaf.view
+      : null;
+  const path = owner?.file?.path;
+  const value = editor.getValue();
+  const selections = JSON.stringify(editor.listSelections());
+  return () => {
+    if (
+      value === editor.getValue() &&
+      (!owner ||
+        (owner.file?.path === path &&
+          (workspace.activeEditor?.editor !== editor ||
+            workspace.activeEditor.file?.path === path) &&
+          (workspace.activeLeaf?.view?.editor !== editor ||
+            workspace.activeLeaf.view.file?.path === path))) &&
+      selections === JSON.stringify(editor.listSelections())
+    )
+      return true;
+    new Notice(
+      'Editor changed while resolving the citation. Insertion cancelled.',
+    );
+    return false;
+  };
 }
 
 export default class CitationPlugin extends Plugin {
@@ -74,9 +116,9 @@ export default class CitationPlugin extends Plugin {
   get editor(): CitationEditor {
     const workspace = this.app.workspace as any;
     const active = workspace.activeEditor?.editor;
-    if (typeof active?.replaceSelection === 'function') return active;
+    if (isCitationEditor(active)) return active;
     const fallback = workspace.activeLeaf?.view?.editor;
-    return typeof fallback?.replaceSelection === 'function' ? fallback : null;
+    return isCitationEditor(fallback) ? fallback : null;
   }
 
   async loadSettings(): Promise<void> {
@@ -383,8 +425,7 @@ export default class CitationPlugin extends Plugin {
   }
 
   /**
-   * Run a case-insensitive search for the literature note file corresponding to
-   * the given citekey. If no corresponding file is found, create one.
+   * Return the configured literature note, creating it if needed.
    */
   async getOrCreateLiteratureNoteFile(
     citekey: string,
@@ -413,11 +454,9 @@ export default class CitationPlugin extends Plugin {
       }
       const matches = this.app.vault
         .getMarkdownFiles()
-        .filter(
-          (file) => file.name.toLowerCase() === `${title}.md`.toLowerCase(),
-        );
+        .filter((file) => file.path.toLowerCase() === target.toLowerCase());
       if (matches.length > 1)
-        throw new Error(`Multiple literature notes match ${title}.`);
+        throw new Error(`Multiple literature notes match ${target}.`);
       if (matches.length === 1) return matches[0];
       const parts = target.split('/');
       parts.pop();
@@ -446,13 +485,17 @@ export default class CitationPlugin extends Plugin {
     citekey: string,
     editor = this.editor,
   ): Promise<void> {
-    if (!editor) {
-      new Notice('No active editor. Open a note or canvas text editor first.');
+    if (!isCitationEditor(editor)) {
+      new Notice(
+        'No compatible editor. Open a note or canvas text editor first.',
+      );
       return;
     }
+    const unchanged = captureEditor(editor, this.app.workspace);
     const sourcePath =
       (this.app.workspace as any).activeEditor?.file?.path || '';
     const file = await this.getOrCreateLiteratureNoteFile(citekey);
+    if (!unchanged()) return;
     const useMarkdown = (this.app.vault as any).getConfig('useMarkdownLinks');
     const link = (this.app.fileManager.generateMarkdownLink as any)(
       file,
@@ -467,11 +510,15 @@ export default class CitationPlugin extends Plugin {
     citekey: string,
     editor = this.editor,
   ): Promise<void> {
-    if (!editor) {
-      new Notice('No active editor. Open a note or canvas text editor first.');
+    if (!isCitationEditor(editor)) {
+      new Notice(
+        'No compatible editor. Open a note or canvas text editor first.',
+      );
       return;
     }
-    editor.replaceSelection(await this.getInitialContentForCitekey(citekey));
+    const unchanged = captureEditor(editor, this.app.workspace);
+    const content = await this.getInitialContentForCitekey(citekey);
+    if (unchanged()) editor.replaceSelection(content);
   }
 
   async insertMarkdownCitation(
@@ -479,27 +526,38 @@ export default class CitationPlugin extends Plugin {
     alternative = false,
     editor = this.editor,
   ): Promise<void> {
-    if (!editor) {
-      new Notice('No active editor. Open a note or canvas text editor first.');
+    if (!isCitationEditor(editor)) {
+      new Notice(
+        'No compatible editor. Open a note or canvas text editor first.',
+      );
       return;
     }
+    const unchanged = captureEditor(editor, this.app.workspace);
     const citation = alternative
       ? await this.getAlternativeMarkdownCitationForCitekey(citekey)
       : await this.getMarkdownCitationForCitekey(citekey);
-    editor.replaceSelection(citation);
+    if (unchanged()) editor.replaceSelection(citation);
   }
 
   async getEntryZoteroLinkForCitekey(citekey: string): Promise<string> {
     return (
       this.library.entries[citekey].zoteroSelectURI ||
-      resolveZoteroLink(citekey)
+      resolveZoteroLink(
+        citekey,
+        false,
+        this.library.entries[citekey].zoteroSourceURI,
+      )
     );
   }
 
   async getPdfZoteroLinkForCitekey(citekey: string): Promise<string> {
     return (
       this.library.entries[citekey].zoteroPdfURI ||
-      resolveZoteroLink(citekey, true)
+      resolveZoteroLink(
+        citekey,
+        true,
+        this.library.entries[citekey].zoteroSourceURI,
+      )
     );
   }
 
@@ -508,10 +566,13 @@ export default class CitationPlugin extends Plugin {
     pdf = false,
     editor = this.editor,
   ): Promise<void> {
-    if (!editor) {
-      new Notice('No active editor. Open a note or canvas text editor first.');
+    if (!isCitationEditor(editor)) {
+      new Notice(
+        'No compatible editor. Open a note or canvas text editor first.',
+      );
       return;
     }
+    const unchanged = captureEditor(editor, this.app.workspace);
     const link = pdf
       ? await this.getPdfZoteroLinkForCitekey(citekey)
       : await this.getEntryZoteroLinkForCitekey(citekey);
@@ -519,6 +580,6 @@ export default class CitationPlugin extends Plugin {
       new Notice('This reference has no Zotero link.');
       return;
     }
-    editor.replaceSelection(link);
+    if (unchanged()) editor.replaceSelection(link);
   }
 }

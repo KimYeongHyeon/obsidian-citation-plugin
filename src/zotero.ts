@@ -61,6 +61,7 @@ async function rpc(method: string, params: unknown[]): Promise<any> {
 export async function resolveZoteroLink(
   citekey: string,
   pdf = false,
+  expectedItemURI?: string | null,
 ): Promise<string> {
   const result = await rpc('item.search', [citekey, '*']);
   if (!Array.isArray(result))
@@ -84,6 +85,19 @@ export async function resolveZoteroLink(
     );
   if (!id && !local)
     throw new Error(`Zotero did not return an item URI for ${citekey}.`);
+  if (expectedItemURI != null) {
+    const canonical = (uri: string) =>
+      uri
+        .replace(/^https?:\/\/(?:www\.)?zotero\.org\//i, '')
+        .replace(/\/$/, '');
+    if (
+      !/^https?:\/\/(?:www\.)?zotero\.org\/(?:users\/(?:\d+|local\/[A-Z0-9]+)|groups\/\d+)\/items\/[A-Z0-9]{8}\/?$/i.test(
+        expectedItemURI,
+      ) ||
+      canonical(expectedItemURI) !== canonical(matches[0].id)
+    )
+      throw new Error(`Zotero item identity does not match for ${citekey}.`);
+  }
   if (!pdf && local) return `zotero://select/library/items/${local[1]}`;
   if (!pdf)
     return `zotero://select/${
@@ -99,9 +113,12 @@ export async function resolveZoteroLink(
       typeof item.path === 'string' &&
       /\.pdf$/i.test(item.path) &&
       typeof item.open === 'string' &&
-      /^zotero:\/\/open-pdf\/(?:library|groups\/\d+)\/items\/[A-Z0-9]{8}$/i.test(
-        item.open,
-      ),
+      new RegExp(
+        `^zotero://open-pdf/${
+          id && id[1].toLowerCase() === 'groups' ? `groups/${id[2]}` : 'library'
+        }/items/[A-Z0-9]{8}$`,
+        'i',
+      ).test(item.open),
   );
   if (!attachment) throw new Error(`No PDF attachment found for ${citekey}.`);
   return attachment.open;

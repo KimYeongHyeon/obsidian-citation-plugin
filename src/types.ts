@@ -106,8 +106,8 @@ export function loadEntries(
 
   if (databaseType == 'csl-json') {
     libraryArray = JSON.parse(databaseRaw);
-    if (!Array.isArray(libraryArray) || !libraryArray.length)
-      throw new Error('CSL JSON must be a non-empty array of entries');
+    if (!Array.isArray(libraryArray))
+      throw new Error('CSL JSON must be an array of entries');
   } else if (databaseType == 'biblatex') {
     let warningCount = 0;
     const options: BibTeXParser.ParserOptions = {
@@ -268,6 +268,15 @@ export interface Author {
  * Each entry has a unique identifier, known in most reference managers as its
  * "citekey."
  */
+function zoteroHTTPItemURI(value?: string): string {
+  return typeof value === 'string' &&
+    /^https?:\/\/(?:www\.)?zotero\.org\/(?:users\/(?:\d+|local\/[A-Z0-9]+)|groups\/\d+)\/items\/[A-Z0-9]{8}\/?$/i.test(
+      value,
+    )
+    ? value
+    : null;
+}
+
 function zoteroItemURI(value?: string): string {
   if (typeof value !== 'string') return null;
   const native = value.match(
@@ -275,17 +284,17 @@ function zoteroItemURI(value?: string): string {
   );
   if (native)
     return `zotero://select/${native[1].toLowerCase()}/items/${native[2]}`;
-  const local = value.match(
-    /^https?:\/\/(?:www\.)?zotero\.org\/users\/local\/[A-Z0-9]+\/items\/([A-Z0-9]{8})\/?$/i,
-  );
-  if (local) return `zotero://select/library/items/${local[1]}`;
   const match = value.match(
     /^https?:\/\/(?:www\.)?zotero\.org\/(users|groups)\/(\d+)\/items\/([A-Z0-9]{8})\/?$/i,
   );
   if (!match) return null;
   return match[1].toLowerCase() === 'groups'
     ? `zotero://select/groups/${match[2]}/items/${match[3]}`
-    : `zotero://select/library/items/${match[3]}`;
+    : null;
+}
+
+function selectZoteroIdentity(values: string[]): string {
+  return values.find(zoteroHTTPItemURI) || values.find(zoteroItemURI) || null;
 }
 
 export abstract class Entry {
@@ -370,8 +379,16 @@ export abstract class Entry {
     return this.nativeZoteroURI || null;
   }
 
+  protected get zoteroIdentity(): string {
+    return null;
+  }
+
+  public get zoteroSourceURI(): string {
+    return zoteroHTTPItemURI(this.zoteroIdentity);
+  }
+
   protected get nativeZoteroURI(): string {
-    return zoteroItemURI(this.id);
+    return zoteroItemURI(this.zoteroIdentity);
   }
 
   public get zoteroPdfHash(): string {
@@ -403,7 +420,12 @@ export abstract class Entry {
       Object.entries(Object.getOwnPropertyDescriptors(proto))
         .filter(([, descriptor]) => typeof descriptor.get == 'function')
         .forEach(([key, descriptor]) => {
-          if (descriptor && key[0] !== '_' && key !== 'nativeZoteroURI') {
+          if (
+            descriptor &&
+            key[0] !== '_' &&
+            key !== 'nativeZoteroURI' &&
+            key !== 'zoteroIdentity'
+          ) {
             try {
               const val = (this as IIndexable)[key];
               jsonObj[key] = val;
@@ -497,8 +519,8 @@ export class EntryCSLAdapter extends Entry {
   get issue(): string {
     return this.data.issue;
   }
-  protected get nativeZoteroURI(): string {
-    return zoteroItemURI(this.data.uri) || super.nativeZoteroURI;
+  protected get zoteroIdentity(): string {
+    return selectZoteroIdentity([this.data.uri, this.data.id]);
   }
   get note(): string {
     return this.data.note;
@@ -657,12 +679,12 @@ export class EntryBibLaTeXAdapter extends Entry {
     return this.data.type;
   }
 
-  protected get nativeZoteroURI(): string {
-    return (
-      zoteroItemURI(this.data.fields.zotero?.[0]) ||
-      zoteroItemURI(this.data.fields.uri?.[0]) ||
-      super.nativeZoteroURI
-    );
+  protected get zoteroIdentity(): string {
+    return selectZoteroIdentity([
+      this.data.fields.zotero?.[0],
+      this.data.fields.uri?.[0],
+      this.data.fields.id?.[0],
+    ]);
   }
 
   get files(): string[] {
